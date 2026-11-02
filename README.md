@@ -62,3 +62,7 @@ shimmer_live/
 
 - **Linux:** no root needed. The app opens RFCOMM sockets directly; `rfcomm bind` is not needed. The RFCOMM channel is looked up through SDP (`sdptool`). If that fails, the app tries channels in turn, and caches the result. Settings and logs are stored in `~/.config/shimmer_live/`.
 - **Windows:** streaming goes through the outgoing Bluetooth COM port that Windows creates when you pair a Shimmer. Settings and logs are stored in `%APPDATA%\ShimmerLive\`. **The Windows code paths (pairing, COM port, shared clock) have not been run on a Windows machine yet.** The rest of the app (UI, sessions, recording) is shared code and has been tested on Linux.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE). The app uses [pyshimmer](https://github.com/seemoo-lab/pyshimmer), which is also GPL-3.0. You may use, modify and share it; if you distribute it, you must include the source code under the same license.
