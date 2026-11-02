@@ -1,142 +1,135 @@
 #!/usr/bin/env python3
-"""Load a Shimmer Live recording and align every sample to PC time.
+"""Load a Shimmer Live recording (.zip) with pandas.
 
-    python load_recording.py path/to/recording.csv            # summary
-    python load_recording.py path/to/recording.csv --plot     # also plot (needs matplotlib)
-    python load_recording.py path/to/recording.csv --save     # write <device>_aligned.csv files
+    python load_recording.py recording.zip             # summary
+    python load_recording.py recording.zip --plot      # plot every channel with keypoints (needs matplotlib)
+    python load_recording.py recording.zip --extract   # unzip next to the file
 
-Or from your own code:
+From your own code:
 
     from load_recording import load_recording
-    devices = load_recording("recording.csv")     # {device name: DataFrame}
-    ecg = devices["Shimmer3-8395"]
-    ecg[["sample_unix_s", "EXG1_CH1_mV"]]
+    rec = load_recording("recording.zip")
+    ecg = rec["devices"]["Shimmer3-8395"]                    # DataFrame, one row per sample
+    ecg["Shimmer3-8395_Timestamp_Unix_CAL"]                  # ms since 1970 (UTC), sample time
+    ecg["Shimmer3-8395_ECG_LL-RA_24BIT_CAL"]                 # mV
+    rec["keypoints"], rec["qc"], rec["info"]["notes"]
+    rec["plugins"]["HRV - Shimmer3-8395"]                    # heart rate, RR, RMSSD per beat
 
-Why alignment is needed: host_unix_ns / shared_clock_* are the times the PC *received* each
-packet. Bluetooth adds a variable delay (typically 10-100 ms, packets often arrive in bursts),
-so these jitter. The Shimmer's own clock (shimmer_time_s) spaces samples exactly. For each
-connection period this script fits a line from Shimmer time to PC time (the slope absorbs the
-small drift between the two crystals) and places it on the lower edge of the arrival times,
-because a packet can arrive late but never early. Added columns:
+Each device file uses the Consensys "Calibrated" CSV layout ("sep=," line, column names, units,
+data), so existing Consensys scripts can read the files inside the ZIP too. Every table has three
+timestamps: <device>_Timestamp_Unix_CAL (ms, PC wall clock), _Timestamp_Shared_CAL (s, shared
+clock: Unreal/QueryPerformanceCounter on Windows) and _Timestamp_CAL (ms, Shimmer clock). The
+PC times are sampling times: Bluetooth latency was already removed when the recording was saved.
 
-    period             connection period (increments after each link loss / reconnect)
-    sample_unix_s      estimated sampling instant, PC wall clock (UTC, seconds since 1970)
-    sample_shared_s    the same instant on the shared clock (same units as shared_clock_s)
-    latency_ms         how late each packet arrived relative to that estimate
-
-Only needs pandas and numpy. Licensed GPL-3.0 like the rest of the project.
+Only needs pandas. Licensed GPL-3.0 like the rest of the project.
 """
 import argparse
+import csv
+import io
 import json
 import sys
+import zipfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-TICKS_PER_S = 32768.0
-COMMON = ["device", "mac", "host_unix_ns", "host_utc_iso", "shared_clock_ticks", "shared_clock_s",
-          "host_perf_ns", "shimmer_ts_raw", "shimmer_ticks", "shimmer_time_s"]
+TABLES = {"keypoints.csv", "qc.csv"}
 
 
-def load_recording(csv_path) -> dict:
-    """Read a recording; return {device name: DataFrame} with sample-time alignment added."""
-    df = pd.read_csv(csv_path, dtype={"device": str, "mac": str, "host_utc_iso": str},
-                     low_memory=False)
-    out = {}
-    for name, d in df.groupby("device", sort=False):
-        d = d.dropna(axis=1, how="all")                       # other devices' channel columns
-        d = d.sort_values("shimmer_ticks").reset_index(drop=True)
-        d["host_unix_ns"] = d["host_unix_ns"].astype("int64")
-        if "shared_clock_ticks" in d:          # absent in recordings from early versions
-            d["shared_clock_ticks"] = d["shared_clock_ticks"].astype("int64")
-        out[name] = align_to_host(d)
+def _lines(data: bytes) -> list:
+    lines = data.decode("utf-8").splitlines()
+    return lines[1:] if lines and lines[0].strip('"') == "sep=," else lines
+
+
+def read_consensys_csv(data: bytes) -> tuple:
+    """Return (DataFrame, units) for a Consensys-layout CSV: "sep=," / names / units / data."""
+    lines = _lines(data)
+    names = next(csv.reader([lines[0]]))
+    units = next(csv.reader([lines[1]]))
+    df = pd.read_csv(io.StringIO("\n".join(lines[2:])), header=None, names=names)
+    return df, units
+
+
+def read_plain_csv(data: bytes) -> pd.DataFrame:
+    lines = _lines(data)
+    return pd.read_csv(io.StringIO("\n".join(lines))) if lines else pd.DataFrame()
+
+
+def load_recording(path) -> dict:
+    """{"devices": {name: df}, "plugins": {name: df}, "units": {file: [...]}, "keypoints": df, "qc": df,
+    "info": dict, "notes": str}"""
+    out = {"devices": {}, "plugins": {}, "units": {}}
+    with zipfile.ZipFile(path) as zf:
+        info = json.loads(zf.read("info.json"))
+        out["info"] = info
+        out["notes"] = zf.read("notes.txt").decode("utf-8") if "notes.txt" in zf.namelist() else ""
+        device_names = [d["name"] for d in info["devices"]]
+        for member in zf.namelist():
+            if member in ("info.json", "notes.txt"):
+                continue
+            if member in TABLES:
+                out[member[:-4]] = read_plain_csv(zf.read(member))
+                continue
+            df, units = read_consensys_csv(zf.read(member))
+            out["units"][member] = units
+            prefix = df.columns[0].rsplit("_Timestamp_Unix_CAL", 1)[0]
+            if prefix in device_names:
+                out["devices"][prefix] = df
+            else:
+                out["plugins"][member[:-4]] = df
     return out
 
 
-def split_periods(ticks: np.ndarray) -> np.ndarray:
-    """Period number per sample: a new period starts where the Shimmer clock jumps (reconnect)."""
-    if len(ticks) < 2:
-        return np.zeros(len(ticks), dtype=int)
-    step = np.diff(ticks)
-    nominal = np.median(step)
-    return np.concatenate([[0], np.cumsum(step > 2.5 * nominal)])
+def summarise(rec: dict) -> None:
+    info = rec["info"]
+    s = info["summary"]
+    print(f"Recording: {info.get('recording_name') or '(no name)'}   started {s['start_utc']}   "
+          f"duration {s['duration_s']:.1f} s   app {info.get('app_version')}")
+    if rec["notes"]:
+        print("Notes:", rec["notes"].replace("\n", "\n       "))
+    for d in info["devices"]:
+        st = d["stats"]
+        print(f"\n{d['name']} ({d['mac']}, {d['kind']}, {d['sampling_rate_hz']:g} Hz): {st['samples']:,} samples, "
+              f"{st['completeness_pct']:.1f} % complete, {st['disconnects']} connection loss(es)")
+        df = rec["devices"].get(d["name"])
+        if df is not None:
+            chans = [c[len(d["name"]) + 1:] for c in df.columns
+                     if "Timestamp" not in c and not c.endswith("_Keypoint")]
+            print("  channels:", ", ".join(chans))
+    for name, df in rec["plugins"].items():
+        print(f"\nplugin {name}: {len(df)} values")
+    kp = rec.get("keypoints")
+    if kp is not None and len(kp):
+        print("\nkeypoints:", ", ".join(kp["Keypoint"]))
+    qc = rec.get("qc")
+    if qc is not None and len(qc):
+        bad = qc[qc["status"].isin(["WARNING", "FAIL"])]
+        print(f"\nquality checks: {len(qc) - len(bad)} OK/INFO, {len(bad)} warning(s)/failure(s)")
+        for _, r in bad.iterrows():
+            print(f"  {r['status']:7s} {r['device']} {r['signal']} {r['check']}: {r['value']} {r['detail']}")
 
 
-def _fit_lower_edge(t: np.ndarray, host: np.ndarray):
-    """host ~= a*t + b, with b chosen so no packet arrives before its estimated sampling time."""
-    if len(t) < 2 or np.ptp(t) == 0:
-        return 1.0, float(np.min(host - t))
-    a = np.polyfit(t, host, 1)[0]
-    return a, float(np.min(host - a * t))
-
-
-def align_to_host(d: pd.DataFrame) -> pd.DataFrame:
-    d = d.copy()
-    d["period"] = split_periods(d["shimmer_ticks"].to_numpy())
-    t = d["shimmer_time_s"].to_numpy(dtype=float)
-    # Work relative to the first sample: absolute epoch seconds lose precision in a float fit.
-    u0 = int(d["host_unix_ns"].iloc[0])
-    host = (d["host_unix_ns"].to_numpy() - u0) / 1e9
-    has_shared = "shared_clock_ticks" in d
-    if has_shared:
-        s0 = int(d["shared_clock_ticks"].iloc[0])
-        spc = float(d["shared_clock_s"].iloc[0]) / s0 if s0 else 1e-9   # seconds per shared-clock tick
-        shared = (d["shared_clock_ticks"].to_numpy() - s0) * spc
-    sample_host = np.empty(len(d))
-    sample_shared = np.empty(len(d))
-    for p in np.unique(d["period"]):
-        m = (d["period"] == p).to_numpy()
-        a, b = _fit_lower_edge(t[m], host[m])
-        sample_host[m] = a * t[m] + b
-        if has_shared:
-            a, b = _fit_lower_edge(t[m], shared[m])
-            sample_shared[m] = a * t[m] + b
-    d["sample_unix_s"] = u0 / 1e9 + sample_host
-    if has_shared:
-        d["sample_shared_s"] = s0 * spc + sample_shared
-    d["latency_ms"] = (host - sample_host) * 1000.0
-    return d
-
-
-def channel_columns(d: pd.DataFrame) -> list:
-    """Calibrated signal columns (e.g. GSR_uS, EXG1_CH1_mV), falling back to raw ones."""
-    cols = [c for c in d.columns if c not in COMMON and c not in ("period", "sample_unix_s", "sample_shared_s",
-                                                                 "latency_ms") and not c.startswith("VBATT")
-            and "STATUS" not in c]
-    calibrated = [c for c in cols if not c.endswith("_raw")]
-    return calibrated or cols
-
-
-def summarise(path: Path, devices: dict) -> None:
-    meta_path = path.with_name(path.name[:-4] + ".meta.json")
-    if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        print(f"Recording {meta.get('recording_name') or meta['file']}: started {meta['start_host_utc_iso']}")
-        for ev in meta.get("events", []):
-            print(f"  {ev['host_utc_iso']}  {ev['device']}: {ev['event']} - {ev['text']}")
-    for name, d in devices.items():
-        span = d["sample_unix_s"].iloc[-1] - d["sample_unix_s"].iloc[0]
-        step = np.median(np.diff(d["shimmer_ticks"])) if len(d) > 1 else float("nan")
-        rate = TICKS_PER_S / step                             # from the Shimmer's own sample spacing
-        covered = len(d) / rate
-        print(f"\n{name} ({d['mac'].iloc[0]}): {len(d):,} samples at {rate:g} Hz = {covered:.1f} s of data "
-              f"over {span:.1f} s, {d['period'].nunique()} connection period(s)")
-        print(f"  Bluetooth latency: median {d['latency_ms'].median():.1f} ms, "
-              f"95th pct {d['latency_ms'].quantile(0.95):.1f} ms, max {d['latency_ms'].max():.1f} ms")
-        print(f"  channels: {', '.join(channel_columns(d))}")
-
-
-def plot(devices: dict) -> None:
+def plot(rec: dict) -> None:
     import matplotlib.pyplot as plt
-    rows = [(name, c) for name, d in devices.items() for c in channel_columns(d)]
-    t0 = min(d["sample_unix_s"].iloc[0] for d in devices.values())
-    fig, axes = plt.subplots(len(rows), 1, sharex=True, figsize=(11, 1.8 * len(rows) + 1), squeeze=False)
-    for ax, (name, c) in zip(axes[:, 0], rows):
-        d = devices[name]
-        for _, part in d.groupby("period"):                   # no line across connection gaps
-            ax.plot(part["sample_unix_s"] - t0, part[c], lw=0.8)
-        ax.set_title(f"{name} - {c}", loc="left", fontsize=9)
+    series = []
+    for df in list(rec["devices"].values()) + list(rec["plugins"].values()):
+        tcol = df.columns[0]
+        for c in df.columns:
+            if "Timestamp" in c or c.endswith("_Keypoint") or "Status" in c or df[c].dtype == object:
+                continue
+            series.append((tcol, c, df))
+    if not series:
+        print("nothing to plot")
+        return
+    t0 = min(df[t].min() for t, _, df in series)
+    fig, axes = plt.subplots(len(series), 1, sharex=True, figsize=(11, 1.7 * len(series) + 1), squeeze=False)
+    kp = rec.get("keypoints")
+    for ax, (tcol, c, df) in zip(axes[:, 0], series):
+        ax.plot((df[tcol] - t0) / 1000, df[c], "o-" if len(df) < 2000 else "-", lw=0.8, ms=2)
+        ax.set_title(c, loc="left", fontsize=9)
+        if kp is not None and len(kp):
+            for _, k in kp.iterrows():
+                ax.axvline((k["Timestamp_Unix_CAL"] - t0) / 1000, color=k["Color"], lw=1.2)
     axes[-1, 0].set_xlabel("seconds since recording start")
     fig.tight_layout()
     plt.show()
@@ -144,19 +137,19 @@ def plot(devices: dict) -> None:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("csv", type=Path)
-    ap.add_argument("--plot", action="store_true", help="plot all channels (needs matplotlib)")
-    ap.add_argument("--save", action="store_true", help="write one aligned CSV per device next to the input")
+    ap.add_argument("zip", type=Path)
+    ap.add_argument("--plot", action="store_true", help="plot all channels with keypoints (needs matplotlib)")
+    ap.add_argument("--extract", action="store_true", help="unzip the recording next to the file")
     args = ap.parse_args(argv)
-    devices = load_recording(args.csv)
-    summarise(args.csv, devices)
-    if args.save:
-        for name, d in devices.items():
-            out = args.csv.with_name(f"{args.csv.stem}_{name}_aligned.csv")
-            d.to_csv(out, index=False)
-            print(f"wrote {out}")
+    rec = load_recording(args.zip)
+    summarise(rec)
+    if args.extract:
+        out = args.zip.with_suffix("")
+        with zipfile.ZipFile(args.zip) as zf:
+            zf.extractall(out)
+        print(f"\nextracted to {out}")
     if args.plot:
-        plot(devices)
+        plot(rec)
 
 
 if __name__ == "__main__":

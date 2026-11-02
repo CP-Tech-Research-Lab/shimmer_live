@@ -5,13 +5,13 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QPlainTextEdit,
                                QLineEdit, QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QTextBrowser, QVBoxLayout)
 
-from .. import clocks
-from .common import CRITICAL, MUTED, fmt_duration
+from .. import clocks, export
+from .common import CRITICAL, GOOD, MUTED, WARNING, fmt_duration, run_bg
 
 
 class PinDialog(QDialog):
@@ -55,27 +55,33 @@ class TimingInfoDialog(QDialog):
 
         def tick():
             u, k = clocks.unix_ns(), clocks.shared_clock_ticks()
-            live.setText(f"now  host_unix_ns       = {u}   ({clocks.utc_iso(u)})\n"
-                         f"     shared_clock_ticks = {k}\n"
-                         f"     shared_clock_s     = {clocks.shared_clock_seconds(k)!r}")
+            live.setText(f"now   wall clock   = {u / 1e6:.3f} ms since 1970  ({clocks.utc_iso(u)})\n"
+                         f"      shared clock = {clocks.shared_clock_seconds(k)!r} s")
         tick()
         self._t = QTimer(self, interval=100, timeout=tick)
         self._t.start()
 
         hu, sc = rep["host_unix_ns"], rep["shared_clock"]
         html = f"""
-<h3>System clocks used on this computer</h3>
-<p>Platform: <b>{rep['platform']}</b>, Python {rep['python']}</p>
+<h3>Timestamps in every recorded file</h3>
 <table cellpadding="4" border="1" cellspacing="0" style="border-collapse:collapse">
-<tr><th>CSV column</th><th>Source (this machine)</th><th>Properties</th></tr>
-<tr><td><b>host_unix_ns</b><br>host_utc_iso</td><td><code>{hu['python_call']}</code> &rarr;
-<code>{hu['implementation']}</code></td><td>wall clock, UTC epoch; adjustable (NTP can step/slew it)</td></tr>
-<tr><td><b>shared_clock_ticks</b><br><b>shared_clock_s</b></td><td><code>{sc['source']}</code><br>
-seconds per tick = {sc['seconds_per_cycle']!r}</td>
-<td>monotonic, never jumps; origin = system boot; valid on this machine only</td></tr>
+<tr><th>Column</th><th>Unit</th><th>Clock (this machine)</th></tr>
+<tr><td><b>&lt;device&gt;_Timestamp_Unix_CAL</b></td><td>ms</td><td>PC wall clock, UTC epoch: <code>{hu['python_call']}</code>
+&rarr; <code>{hu['implementation']}</code>. Same convention as Consensys. NTP can adjust it.</td></tr>
+<tr><td><b>&lt;device&gt;_Timestamp_Shared_CAL</b></td><td>s</td><td>shared clock: <code>{sc['source']}</code>.
+Monotonic, never jumps, origin = system boot, valid on this PC only.</td></tr>
+<tr><td><b>&lt;device&gt;_Timestamp_CAL</b></td><td>ms</td><td>the Shimmer's own clock (32768 Hz crystal, resolution
+30.5 &micro;s), 0 = first sample of the live session. Sample spacing is exact in this clock.</td></tr>
 </table>
+<p>Platform: {rep['platform']}, Python {rep['python']}.</p>
 
-<h3>Shared clock (sync with Unreal Engine and other software on this PC)</h3>
+<h3>Sampling time, not arrival time</h3>
+<p>Bluetooth delays packets by a variable amount (tens to hundreds of ms; packets often arrive in bursts) but never
+delivers them early. When a recording is saved, the Shimmer clock is fitted to each PC clock per connection period,
+along the lower edge of the arrival times (lower convex hull). The two PC columns therefore hold the estimated
+<i>sampling</i> instant of each sample, with Bluetooth latency removed and clock drift corrected.</p>
+
+<h3>Syncing with Unreal Engine and other software on this PC</h3>
 <p>On <b>Windows</b> the shared clock is the performance counter, computed exactly like Unreal Engine's</p>
 <pre>double USharedClockLibrary::ReadSharedClockSeconds()
 {{
@@ -83,28 +89,15 @@ seconds per tick = {sc['seconds_per_cycle']!r}</td>
     return static_cast&lt;double&gt;(Ticks)
          * FPlatformTime::GetSecondsPerCycle64();            // 1.0 / QueryPerformanceFrequency
 }}</pre>
-<p>so <code>shared_clock_s</code> in the CSV can be compared directly with values from that function.
-<code>shared_clock_ticks</code> is the raw counter (exact integer). On Linux the shared clock is
-<code>clock_gettime(CLOCK_MONOTONIC)</code> in nanoseconds.</p>
+<p>so <code>Timestamp_Shared_CAL</code> can be compared directly with values from that function. On Linux the shared
+clock is <code>clock_gettime(CLOCK_MONOTONIC)</code>.</p>
 
-<h3>Shimmer clock</h3>
-<p><b>shimmer_ts_raw</b> is the device's own timestamp sent in every packet: a 24-bit counter of the Shimmer's
-32768 Hz crystal (resolution 30.5 &micro;s), wrapping every 512 s. <b>shimmer_ticks</b> is the same counter unwrapped
-(0 at the first sample of the session) and <b>shimmer_time_s</b> = shimmer_ticks / 32768.
-Sample spacing is exact in this clock; use it for signal processing.</p>
-
-<h3>How to synchronise with other systems</h3>
+<h3>Syncing with other computers</h3>
 <ul>
-<li>host_* values are taken when this PC <i>receives</i> the packet. Bluetooth adds a variable delay
-(typically 10&ndash;100 ms; packets can arrive in bursts), so individual host stamps jitter.</li>
-<li>Best estimate of when a sample was taken in host time: fit a straight line
-<code>host_unix_ns &asymp; a&middot;shimmer_time_s + b</code> per device (and per connection period) and use the fitted
-value; the minimum envelope of host stamps is a good estimate of the offset.</li>
-<li>Other software on <b>this</b> PC: read the shared clock (above) and compare with <code>shared_clock_s</code>,
-or read the wall clock and compare with host_unix_ns.</li>
-<li>Other <b>computers</b>: make sure all clocks are NTP/PTP synchronised (Linux: <code>timedatectl</code> /
-<code>chronyc tracking</code>; Windows: <code>w32tm /query /status</code>).</li>
-<li>Each recording's <code>.meta.json</code> repeats this information and stores the recording start in all clocks.</li>
+<li>Use <code>Timestamp_Unix_CAL</code> and make sure all clocks are NTP/PTP synchronised (Linux:
+<code>timedatectl</code> / <code>chronyc tracking</code>; Windows: <code>w32tm /query /status</code>).</li>
+<li>Keypoints (<code>keypoints.csv</code>) list every mark on all clocks, including each Shimmer's own clock.</li>
+<li><code>info.json</code> in each recording repeats the clock sources used.</li>
 </ul>
 """
         tb = QTextBrowser()
@@ -124,86 +117,173 @@ def open_folder(path):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
-class RecordingSummaryDialog(QDialog):
-    def __init__(self, parent, recorder, summary):
+QC_COLORS = {"OK": GOOD, "INFO": "#1f4e8c", "WARNING": WARNING, "FAIL": CRITICAL}
+
+
+class SaveRecordingDialog(QDialog):
+    """Shown at Stop (or when recovering an unsaved recording): summary, quality checks, name, notes."""
+
+    def __init__(self, parent, folder, recovered=False):
         super().__init__(parent)
-        self.recorder = recorder
-        self.setWindowTitle("Recording finished")
-        self.resize(820, 460)
+        self.folder = folder
+        self.analysis = None
+        self.saved_path = None
+        self._busy = True
+        self.setWindowTitle("Recovered recording" if recovered else "Save recording")
+        self.resize(940, 720)
         lay = QVBoxLayout(self)
+        self.status = QLabel("Analysing the recording: aligning timestamps and running quality checks…")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        if recovered:
+            warn = QLabel("This recording was not saved because the app closed while recording. "
+                          "Everything written up to that moment is recovered below.")
+            warn.setWordWrap(True)
+            warn.setStyleSheet(f"color: {WARNING}; font-weight: 600;")
+            lay.addWidget(warn)
+        self.form = QFormLayout()
+        lay.addLayout(self.form)
 
-        start_local = dt.datetime.fromtimestamp(recorder.start_unix_ns / 1e9).astimezone()
-        form = QFormLayout()
-        form.addRow("Duration:", QLabel(f"<b>{fmt_duration(summary['duration_s'])}</b> "
-                                        f"({summary['duration_s']:.1f} s)"))
-        form.addRow("Started:", QLabel(f"{start_local:%Y-%m-%d %H:%M:%S.%f}"[:-3] +
-                                       f" {start_local:%Z}  (UTC {summary['start_utc']})"))
-        form.addRow("Size:", QLabel(f"{summary['file_bytes'] / 1e6:.2f} MB"))
-        if summary.get("write_error"):
-            err = QLabel(f"Write error during recording: {summary['write_error']}")
-            err.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
-            form.addRow("Problem:", err)
-        lay.addLayout(form)
-
+        lay.addWidget(QLabel("<b>Devices</b>"))
         cols = ["Device", "Rate", "Samples", "Expected", "Complete", "Disconnects", "Time lost", "Longest gap"]
-        tab = QTableWidget(len(summary["devices"]), len(cols))
-        tab.setHorizontalHeaderLabels(cols)
-        tab.verticalHeader().setVisible(False)
-        tab.setEditTriggers(QTableWidget.NoEditTriggers)
-        for r, d in enumerate(summary["devices"]):
-            pct = d["completeness_pct"]
-            vals = [d["name"], f"{d['rate_hz']:.0f} Hz", f"{d['samples']:,}", f"{d['expected_samples']:,}",
-                    f"{pct:.1f} %", str(d["disconnects"]), f"{d['downtime_s']:.1f} s", f"{d['longest_gap_s']:.1f} s"]
-            for c, v in enumerate(vals):
-                it = QTableWidgetItem(v)
-                if c == 4:
-                    it.setForeground(Qt.darkGreen if pct >= 99 else Qt.darkYellow if pct >= 90 else Qt.red)
-                tab.setItem(r, c, it)
-        tab.resizeColumnsToContents()
-        tab.horizontalHeader().setStretchLastSection(True)
-        lay.addWidget(tab, 1)
-        note = QLabel("“Expected” = sampling rate × duration. Missing samples come from connection losses "
-                      "and from the first second after start while Bluetooth buffers fill.")
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color: {MUTED};")
-        lay.addWidget(note)
+        self.devices = QTableWidget(0, len(cols))
+        self.devices.setHorizontalHeaderLabels(cols)
+        self.devices.verticalHeader().setVisible(False)
+        self.devices.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.devices.setMaximumHeight(130)
+        lay.addWidget(self.devices)
 
-        self.path_label = QLabel()
-        self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.path_label.setWordWrap(True)
-        lay.addWidget(self.path_label)
-        self._show_path()
+        lay.addWidget(QLabel("<b>Quality checks</b> <span style='color:%s'>(heuristics: they flag likely problems, "
+                             "they are not a clinical assessment)</span>" % MUTED))
+        cols = ["Device", "Signal", "Check", "Result", "Value", "Details"]
+        self.qc = QTableWidget(0, len(cols))
+        self.qc.setHorizontalHeaderLabels(cols)
+        self.qc.verticalHeader().setVisible(False)
+        self.qc.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.qc.horizontalHeader().setStretchLastSection(True)
+        lay.addWidget(self.qc, 1)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Name this recording (optional):"))
+        row.addWidget(QLabel("Name (optional):"))
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("e.g. subject03_baseline — the start timestamp is always kept")
+        self.name_edit.setPlaceholderText("e.g. subject03_baseline — the start time is always part of the file name")
         row.addWidget(self.name_edit, 1)
         lay.addLayout(row)
+        lay.addWidget(QLabel("Notes (saved in the file):"))
+        self.notes = QPlainTextEdit()
+        self.notes.setPlaceholderText("Anything worth remembering about this session: participant state, "
+                                      "electrode issues, interruptions…")
+        self.notes.setMaximumHeight(110)
+        if recovered:
+            self.notes.setPlainText("[recovered after the app closed while recording]\n")
+        lay.addWidget(self.notes)
 
         btns = QHBoxLayout()
-        b_open = QPushButton("Open folder")
-        b_open.clicked.connect(lambda: open_folder(self.recorder.folder))
-        btns.addWidget(b_open)
+        self.btn_discard = QPushButton("Discard recording…")
+        self.btn_discard.clicked.connect(self._discard)
+        btns.addWidget(self.btn_discard)
         btns.addStretch(1)
-        b_save = QPushButton("Save && close")
-        b_save.setDefault(True)
-        b_save.clicked.connect(self._save)
-        btns.addWidget(b_save)
+        self.btn_folder = QPushButton("Open folder")
+        self.btn_folder.clicked.connect(lambda: open_folder(self.folder.parent))
+        btns.addWidget(self.btn_folder)
+        self.btn_save = QPushButton("Save")
+        self.btn_save.setDefault(True)
+        self.btn_save.clicked.connect(self._save)
+        btns.addWidget(self.btn_save)
         lay.addLayout(btns)
+        self._enable(False)
+        run_bg(lambda: export.analyze(folder), self._analysed, self._analysis_failed, "analyse")
 
-    def _show_path(self):
-        self.path_label.setText(f"Saved as <b>{self.recorder.csv_path.name}</b> (+ .meta.json)<br>"
-                                f"<span style='color:{MUTED}'>in {self.recorder.folder}</span>")
+    def _enable(self, on):
+        self._busy = not on
+        for b in (self.btn_save, self.btn_discard):
+            b.setEnabled(on)
+
+    def _analysis_failed(self, e):
+        self._busy = False
+        self.btn_discard.setEnabled(True)
+        self.status.setText(f"✖ Could not analyse the recording: {e}\nThe raw working files are kept in {self.folder}.")
+        self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+
+    def _analysed(self, a):
+        self.analysis = a
+        s = a.summary
+        start = dt.datetime.fromtimestamp(s["start_unix_ns"] / 1e9).astimezone()
+        self.form.addRow("Duration:", QLabel(f"<b>{fmt_duration(s['duration_s'])}</b> ({s['duration_s']:.1f} s)"))
+        self.form.addRow("Started:", QLabel(f"{start:%Y-%m-%d %H:%M:%S} {start:%Z}  (UTC {s['start_utc']})"))
+        self.form.addRow("Keypoints:", QLabel(", ".join(a.keypoints["Keypoint"]) if len(a.keypoints) else "none"))
+        if s.get("write_error"):
+            err = QLabel(f"Write error during recording: {s['write_error']}")
+            err.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+            self.form.addRow("Problem:", err)
+        self.devices.setRowCount(len(a.devices))
+        for r, d in enumerate(a.devices):
+            st = d.stats
+            vals = [d.meta["name"], f"{d.meta['sampling_rate_hz']:g} Hz", f"{st['samples']:,}",
+                    f"{st['expected_samples']:,}", f"{st['completeness_pct']:.1f} %", str(st["disconnects"]),
+                    f"{st['downtime_s']:.1f} s", f"{st['longest_gap_s']:.1f} s"]
+            for c, v in enumerate(vals):
+                self.devices.setItem(r, c, QTableWidgetItem(v))
+        self.devices.resizeColumnsToContents()
+        self.qc.setRowCount(len(a.qc))
+        for r, q in enumerate(a.qc):
+            for c, v in enumerate([q.device, q.signal, q.check, q.status, q.value, q.detail]):
+                it = QTableWidgetItem(v)
+                if c == 3:
+                    it.setForeground(QColor(QC_COLORS.get(q.status, MUTED)))
+                    f = it.font()
+                    f.setBold(True)
+                    it.setFont(f)
+                self.qc.setItem(r, c, it)
+        self.qc.resizeColumnsToContents()
+        worst = "FAIL" if any(q.status == "FAIL" for q in a.qc) else \
+            "WARNING" if any(q.status == "WARNING" for q in a.qc) else "OK"
+        msg = {"OK": "✔ All quality checks passed.",
+               "WARNING": "▲ Some quality checks raised warnings — see below and consider noting them.",
+               "FAIL": "✖ Some quality checks failed — see below."}[worst]
+        self.status.setText(msg)
+        self.status.setStyleSheet(f"color: {QC_COLORS[worst]}; font-weight: 600;")
+        self._enable(True)
 
     def _save(self):
-        name = self.name_edit.text().strip()
-        if name:
-            try:
-                self.recorder.rename(name)
-            except OSError as e:
-                QMessageBox.warning(self, "Rename failed", f"Could not rename the files:\n{e}\n\n"
-                                    f"They are kept as {self.recorder.csv_path.name}.")
-                return
+        if self.analysis is None:
+            return
+        self._enable(False)
+        self.status.setText("Saving…")
+        self.status.setStyleSheet("")
+        name, notes = self.name_edit.text().strip(), self.notes.toPlainText().strip()
+
+        def done(path):
+            self.saved_path = path
+            self._busy = False
+            QMessageBox.information(self, "Recording saved", f"Saved as\n{path}")
+            self.accept()
+
+        def failed(e):
+            self._enable(True)
+            self.status.setText(f"✖ Saving failed: {e}")
+            self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+
+        run_bg(lambda: export.write_zip(self.analysis, name, notes), done, failed, "save-recording")
+
+    def _discard(self):
+        if QMessageBox.question(self, "Discard recording",
+                                "Delete this recording permanently? This cannot be undone.",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        export.discard(self.folder)
+        self._busy = False
         self.accept()
 
+    def reject(self):
+        """Closing the dialog must never lose data: save under the default name instead."""
+        if self._busy:
+            return
+        if self.saved_path is None and self.folder.exists() and self.analysis is not None:
+            if QMessageBox.question(self, "Save recording",
+                                    "The recording has not been saved yet. Save it now (with the name and notes "
+                                    "entered so far)?") == QMessageBox.Yes:
+                self._save()
+                return
+            return
+        super().reject()

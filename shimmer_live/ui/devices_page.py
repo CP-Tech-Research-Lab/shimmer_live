@@ -17,6 +17,8 @@ from .common import CRITICAL, GOOD, MUTED, WARNING, Banner, run_bg, set_role, ui
 from .device_settings import DeviceSettingsDialog
 from .dialogs import PinDialog
 from .guide import GUIDE_HTML
+from .icons import logo_pixmap
+from .keypoints_editor import KeypointsEditor
 
 log = logging.getLogger("shimmerlive.devices")
 
@@ -57,6 +59,7 @@ class QtLogHandler(logging.Handler):
 
 class DevicesPage(QWidget):
     show_live = Signal(list)          # [(mac, name), ...]
+    show_plugins = Signal()
 
     def __init__(self, cfg, backend, backend_error):
         super().__init__()
@@ -73,9 +76,19 @@ class DevicesPage(QWidget):
         # ---------------- left: devices ----------------
         left = QWidget()
         lv = QVBoxLayout(left)
+        head = QHBoxLayout()
+        logo = QLabel()
+        logo.setPixmap(logo_pixmap(40))
+        head.addWidget(logo)
         title = QLabel("Devices")
         title.setStyleSheet("font-size: 16pt; font-weight: 700;")
-        lv.addWidget(title)
+        head.addWidget(title)
+        head.addStretch(1)
+        self.btn_plugins = QPushButton("Plugins…")
+        self.btn_plugins.setToolTip("Choose plugins (e.g. real-time HRV) that run in live view")
+        self.btn_plugins.clicked.connect(self.show_plugins.emit)
+        head.addWidget(self.btn_plugins)
+        lv.addLayout(head)
 
         self.adapter_row = QHBoxLayout()
         self.adapter_label = QLabel("checking Bluetooth…")
@@ -171,6 +184,8 @@ class DevicesPage(QWidget):
         guide.setOpenExternalLinks(True)
         guide.setHtml(GUIDE_HTML)
         tabs.addTab(guide, "Guide")
+        self.keypoints = KeypointsEditor(cfg)
+        tabs.addTab(self.keypoints, "Keypoints")
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(2000)

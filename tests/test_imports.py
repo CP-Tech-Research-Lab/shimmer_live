@@ -6,8 +6,12 @@ import sys
 import pytest
 
 MODULES = ["shimmer_live.clocks", "shimmer_live.config", "shimmer_live.conversions", "shimmer_live.transport",
-           "shimmer_live.session", "shimmer_live.recorder", "shimmer_live.device_config", "shimmer_live.bt"]
-UI_MODULES = ["shimmer_live.ui.common", "shimmer_live.ui.guide", "shimmer_live.ui.dialogs",
+           "shimmer_live.session", "shimmer_live.recorder", "shimmer_live.export", "shimmer_live.qc",
+           "shimmer_live.alignment", "shimmer_live.keypoints", "shimmer_live.device_config", "shimmer_live.bt",
+           "shimmer_live.plugins.api", "shimmer_live.plugins.registry", "shimmer_live.plugins.host",
+           "shimmer_live.plugins.builtin.hrv"]
+UI_MODULES = ["shimmer_live.ui.common", "shimmer_live.ui.guide", "shimmer_live.ui.dialogs", "shimmer_live.ui.icons",
+              "shimmer_live.ui.keypoints_editor", "shimmer_live.ui.plugins_page",
               "shimmer_live.ui.device_settings", "shimmer_live.ui.devices_page", "shimmer_live.ui.live_page",
               "shimmer_live.ui.main_window", "shimmer_live.__main__"]
 
@@ -64,5 +68,8 @@ def test_pages_build(qapp, tmp_path):
     devices.refresh()
     live = LivePage(cfg)
     assert not live.recording
-    devices.deleteLater()
-    live.deleteLater()
+    from shimmer_live.ui.plugins_page import PluginsPage
+    plugins = PluginsPage(cfg)
+    assert any(e.cls.id == "hrv" for e in plugins.entries)
+    for w in (devices, live, plugins):
+        w.deleteLater()

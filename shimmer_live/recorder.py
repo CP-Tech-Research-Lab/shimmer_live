@@ -1,36 +1,49 @@
-"""CSV recording of all streaming Shimmers into one long-format file.
+"""Recording, phase 1: stream everything to crash-safe working files while recording.
 
-One row per received sample. Columns:
-  device, mac            which Shimmer the row belongs to
-  host_unix_ns           system wall clock (UTC epoch ns) when the packet was received
-  host_utc_iso           the same instant, human readable (UTC)
-  shared_clock_ticks     monotonic shared clock at reception (Windows: QueryPerformanceCounter)
-  shared_clock_s         shared_clock_ticks * seconds-per-cycle (see clocks.py; Unreal-compatible)
-  shimmer_ts_raw         the Shimmer's own 24-bit timestamp as sent (32768 ticks/s, wraps every 512 s)
-  shimmer_ticks          shimmer_ts_raw unwrapped to a continuous count (0 = first sample of the session)
-  shimmer_time_s         shimmer_ticks / 32768
-  <CH>_raw, <CH>_<unit>  every channel the devices stream: raw value and calibrated value
-Rows of a device leave the other devices' channel columns empty.
+Working folder  <recordings>/.shimmer_<start time>.partial/
+  session.json        devices, recorded channels, plugin outputs, keypoint definitions, clocks
+  device_<n>.csv      shimmer_ticks, host_unix_ns, shared_ticks, then one column per recorded channel
+                      (calibrated values; raw for channels without calibration)
+  plugin_<n>.csv      shimmer_s, output, value     (one row per plugin output value)
+  events.jsonl        keypoints, connection losses/reconnects, clock notes (flushed per line)
+  stop.json           written at Stop (absent if the app closed while recording)
 
-A sidecar <name>.meta.json holds device configuration, clock sources, connection
-events (losses/reconnects with timestamps) and the summary shown at stop.
+Phase 2 (export.py) turns this folder into the final ZIP, with aligned timestamps, quality
+checks and notes, and deletes it. If the app closes while recording, the folder survives and
+is offered for recovery at the next start.
 """
 import csv
 import json
 import logging
 import os
 import queue
-import re
 import shutil
 import threading
 from pathlib import Path
 
-from . import clocks
+from . import __version__, clocks
+from .conversions import EXG_FULL_SCALE
 
 log = logging.getLogger("shimmerlive.recorder")
 
-COMMON_COLUMNS = ["device", "mac", "host_unix_ns", "host_utc_iso", "shared_clock_ticks", "shared_clock_s",
-                  "shimmer_ts_raw", "shimmer_ticks", "shimmer_time_s"]
+PARTIAL_SUFFIX = ".partial"
+FLUSH_INTERVAL_NS = 500_000_000
+
+
+class DeviceStats:
+    def __init__(self, session):
+        self.name, self.mac, self.rate = session.name, session.mac, session.rate
+        self.samples = 0
+        self.disconnects = 0
+        self.downtime_s = 0.0
+        self.longest_gap_s = 0.0
+        self.lost_since_perf = None
+
+
+def _json_dump(path: Path, data) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _fmt(v) -> str:
@@ -39,65 +52,95 @@ def _fmt(v) -> str:
     return str(v)
 
 
-class DeviceStats:
-    def __init__(self, session):
-        self.name, self.mac, self.rate = session.name, session.mac, session.rate
-        self.samples = 0
-        self.first_ticks = self.last_ticks = None
-        self.disconnects = 0
-        self.downtime_s = 0.0
-        self.longest_gap_s = 0.0
-        self.lost_since_perf = None
+def _full_scale(spec):
+    """Calibrated value of a saturated sample (ExG), used by quality control."""
+    if spec.kind == "exg" and spec.convert is not None:
+        return abs(spec.convert(EXG_FULL_SCALE))
+    return None
 
 
 class Recorder:
-    def __init__(self, folder: Path, sessions):
+    def __init__(self, folder, sessions, record_keys: dict, plugin_outputs: dict, keypoints: list):
+        """record_keys: {mac: set of channel keys}; plugin_outputs: {Binding: set of output keys}."""
         self.folder = Path(folder)
-        self.folder.mkdir(parents=True, exist_ok=True)
         self.start_unix_ns = clocks.unix_ns()
         self.start_shared_ticks = clocks.shared_clock_ticks()
         self.start_perf_ns = clocks.perf_ns()
         self.base = "shimmer_" + clocks.local_stamp_for_filename(self.start_unix_ns)
-        self.sessions = [s for s in sessions if s.specs]
+        self.dir = self.folder / f".{self.base}{PARTIAL_SUFFIX}"
+        self.dir.mkdir(parents=True, exist_ok=False)
 
-        columns = list(COMMON_COLUMNS)
-        for s in self.sessions:
-            for spec in s.specs:
-                for col in spec.columns:
-                    if col not in columns:
-                        columns.append(col)
-        self.columns = columns
-        idx = {c: i for i, c in enumerate(columns)}
-        self._layout = {}
-        for s in self.sessions:
-            self._layout[s.mac] = [(spec.convert, idx[spec.columns[0]],
-                                    idx[spec.columns[1]] if spec.convert else None) for spec in s.specs]
+        plugin_items = [(b, set(k)) for b, k in plugin_outputs.items() if k]
+        self._plugin = {b: (j, keys) for j, (b, keys) in enumerate(plugin_items)}
+        macs_with_plugins = {b.session.mac for b, _ in plugin_items}
+        self.sessions = [s for s in sessions if s.specs and (record_keys.get(s.mac) or s.mac in macs_with_plugins)]
+        self._dev = {}
+        devices_meta = []
+        for n, s in enumerate(self.sessions):
+            keys = record_keys.get(s.mac, set())
+            idx = [i for i, sp in enumerate(s.specs) if sp.key in keys]
+            fh = open(self.dir / f"device_{n}.csv", "w", newline="", encoding="utf-8")
+            w = csv.writer(fh)
+            w.writerow(["shimmer_ticks", "host_unix_ns", "shared_ticks"] + [s.specs[i].key for i in idx])
+            self._dev[s.mac] = (fh, w, idx)
+            devices_meta.append({
+                "file": f"device_{n}.csv", "name": s.name, "mac": s.mac, "kind": s.kind, "firmware": s.firmware,
+                "sampling_rate_hz": s.rate, "link": s.link_desc,
+                "channels": [{"key": s.specs[i].key, "label": s.specs[i].label, "unit": s.specs[i].unit,
+                              "export_name": s.specs[i].export_name, "export_unit": s.specs[i].export_unit,
+                              "kind": s.specs[i].kind, "full_scale": _full_scale(s.specs[i])} for i in idx],
+            })
+        plugins_meta = []
+        self._pfiles = {}
+        for b, (j, keys) in self._plugin.items():
+            fh = open(self.dir / f"plugin_{j}.csv", "w", newline="", encoding="utf-8")
+            w = csv.writer(fh)
+            w.writerow(["shimmer_s", "output", "value"])
+            self._pfiles[j] = (fh, w)
+            plugins_meta.append({
+                "file": f"plugin_{j}.csv", "id": b.cls.id, "name": b.cls.name, "version": b.cls.version,
+                "device": b.session.name, "mac": b.session.mac, "inputs": [i.key for i in b.inputs],
+                "outputs": [{"key": o.key, "label": o.label, "unit": o.unit} for o in b.cls.outputs if o.key in keys],
+            })
         self.stats = {s.mac: DeviceStats(s) for s in self.sessions}
-        self.events = []
         self.write_error = None
-        self.stop_unix_ns = None
+        self.keypoints = []
 
-        self.csv_path = self.folder / f"{self.base}.csv"
-        self.meta_path = self.folder / f"{self.base}.meta.json"
-        self._fh = open(self.csv_path, "w", newline="", encoding="utf-8")
-        self._csv = csv.writer(self._fh)
-        self._csv.writerow(columns)
+        _json_dump(self.dir / "session.json", {
+            "app_version": __version__, "base": self.base,
+            "start_unix_ns": self.start_unix_ns, "start_shared_ticks": self.start_shared_ticks,
+            "clocks": clocks.clock_report(), "devices": devices_meta, "plugins": plugins_meta,
+            "keypoint_definitions": [{"name": k.name, "color": k.color} for k in keypoints],
+        })
+        self._events_fh = open(self.dir / "events.jsonl", "a", encoding="utf-8")
+        self._events_lock = threading.Lock()
         self._q = queue.SimpleQueue()
         self._running = True
-        self._writer = threading.Thread(target=self._write_loop, daemon=True, name="csv-writer")
+        self._writer = threading.Thread(target=self._write_loop, daemon=True, name="recorder")
         self._writer.start()
         for s in self.sessions:
             if s.state.value == "lost":
                 self.stats[s.mac].lost_since_perf = s.state_since_ns
                 self.stats[s.mac].disconnects += 1
-        self._write_meta()
         for s in self.sessions:
             s.recorder = self
-        log.info("recording to %s", self.csv_path)
+        log.info("recording to %s", self.dir)
 
-    # called from session reader threads
-    def put(self, session, host_unix_ns, shared_ticks, ts_raw, ticks, raws):
-        self._q.put((session.name, session.mac, host_unix_ns, shared_ticks, ts_raw, ticks, raws))
+    # ---------- called from session / plugin threads ----------
+    def put(self, session, host_unix_ns, shared_ticks, ticks, vals):
+        self._q.put((0, session.mac, ticks, host_unix_ns, shared_ticks, vals))
+
+    def put_plugin(self, binding, key, t_shimmer, value):
+        entry = self._plugin.get(binding)
+        if entry is not None and key in entry[1]:
+            self._q.put((1, entry[0], t_shimmer, key, value))
+
+    def _log_event(self, ev: dict):
+        with self._events_lock:
+            if self._events_fh.closed:
+                return
+            self._events_fh.write(json.dumps(ev) + "\n")
+            self._events_fh.flush()
 
     def event(self, session, kind, unix_ns, perf_ns, text):
         st = self.stats.get(session.mac)
@@ -110,42 +153,41 @@ class Recorder:
                 st.downtime_s += gap
                 st.longest_gap_s = max(st.longest_gap_s, gap)
                 st.lost_since_perf = None
-        self.events.append({"host_unix_ns": unix_ns, "host_utc_iso": clocks.utc_iso(unix_ns),
-                            "device": session.name, "mac": session.mac, "event": kind, "text": text})
+        self._log_event({"type": kind, "device": session.name, "mac": session.mac, "unix_ns": unix_ns,
+                         "text": text})
 
+    def keypoint(self, kp) -> dict:
+        """Mark a keypoint now (called from the UI thread)."""
+        ev = {"type": "keypoint", "name": kp.name, "color": kp.color, "unix_ns": clocks.unix_ns(),
+              "shared_ticks": clocks.shared_clock_ticks()}
+        self.keypoints.append(ev)
+        self._log_event(ev)
+        return ev
+
+    # ---------- writer thread ----------
     def _write_loop(self):
-        n = len(self.columns)
         last_flush = clocks.perf_ns()
         while self._running or not self._q.empty():
             try:
                 item = self._q.get(timeout=0.25)
             except queue.Empty:
                 item = None
-            if item is not None:
-                name, mac, hu, hs, ts, ticks, raws = item
-                row = [""] * n
-                row[0:9] = [name, mac, hu, clocks.utc_iso(hu), hs, repr(clocks.shared_clock_seconds(hs)),
-                            ts, ticks, f"{ticks / clocks.TICKS_PER_S:.6f}"]
-                for (conv, i_raw, i_cal), raw in zip(self._layout[mac], raws):
-                    row[i_raw] = raw
-                    if i_cal is not None:
-                        row[i_cal] = _fmt(conv(raw))
-                st = self.stats[mac]
-                st.samples += 1
-                if st.first_ticks is None:
-                    st.first_ticks = ticks
-                st.last_ticks = ticks
-                try:
-                    self._csv.writerow(row)
-                except OSError as e:
-                    self.write_error = str(e)
-            now = clocks.perf_ns()
-            if now - last_flush > 5e8:
-                try:
-                    self._fh.flush()
-                except OSError as e:
-                    self.write_error = str(e)
-                last_flush = now
+            try:
+                if item is not None and item[0] == 0:
+                    _, mac, ticks, hu, hs, vals = item
+                    fh, w, idx = self._dev[mac]
+                    w.writerow([ticks, hu, hs] + [_fmt(vals[i]) for i in idx])
+                    self.stats[mac].samples += 1
+                elif item is not None:
+                    _, j, t, key, value = item
+                    self._pfiles[j][1].writerow([repr(t), key, _fmt(value)])
+                now = clocks.perf_ns()
+                if now - last_flush > FLUSH_INTERVAL_NS:
+                    for fh, *_ in list(self._dev.values()) + list(self._pfiles.values()):
+                        fh.flush()
+                    last_flush = now
+            except OSError as e:
+                self.write_error = str(e)
 
     def elapsed_s(self) -> float:
         return (clocks.perf_ns() - self.start_perf_ns) / 1e9
@@ -156,85 +198,27 @@ class Recorder:
         except OSError:
             return -1
 
-    def stop(self) -> dict:
+    def stop(self) -> Path:
+        """Stop writing; returns the working folder for export.analyze()."""
         stop_perf = clocks.perf_ns()
-        self.stop_unix_ns = clocks.unix_ns()
+        stop_unix, stop_shared = clocks.unix_ns(), clocks.shared_clock_ticks()
         for s in self.sessions:
             s.recorder = None
         self._running = False
         self._writer.join(timeout=10)
-        self._fh.close()
-        duration = (stop_perf - self.start_perf_ns) / 1e9
+        for fh, *_ in list(self._dev.values()) + list(self._pfiles.values()):
+            fh.close()
+        with self._events_lock:
+            self._events_fh.close()
         for st in self.stats.values():
             if st.lost_since_perf is not None:      # still lost at stop
                 gap = (stop_perf - max(st.lost_since_perf, self.start_perf_ns)) / 1e9
                 st.downtime_s += gap
                 st.longest_gap_s = max(st.longest_gap_s, gap)
-        self.summary = {
-            "duration_s": duration,
-            "start_utc": clocks.utc_iso(self.start_unix_ns),
-            "stop_utc": clocks.utc_iso(self.stop_unix_ns),
-            "file_bytes": self.csv_path.stat().st_size,
-            "write_error": self.write_error,
-            "devices": [{
-                "name": st.name, "mac": st.mac, "rate_hz": st.rate, "samples": st.samples,
-                "expected_samples": int(round(st.rate * duration)),
-                "completeness_pct": 100.0 * st.samples / max(1.0, st.rate * duration),
-                "shimmer_span_s": ((st.last_ticks - st.first_ticks) / clocks.TICKS_PER_S
-                                   if st.first_ticks is not None else 0.0),
-                "disconnects": st.disconnects, "downtime_s": st.downtime_s,
-                "longest_gap_s": st.longest_gap_s,
-            } for st in self.stats.values()],
-        }
-        self._write_meta()
-        log.info("recording stopped: %s", self.csv_path)
-        return self.summary
-
-    def _write_meta(self):
-        meta = {
-            "file": self.csv_path.name,
-            "start_host_unix_ns": self.start_unix_ns,
-            "start_host_utc_iso": clocks.utc_iso(self.start_unix_ns),
-            "start_shared_clock_ticks": self.start_shared_ticks,
-            "start_shared_clock_s": clocks.shared_clock_seconds(self.start_shared_ticks),
-            "stop_host_unix_ns": self.stop_unix_ns,
-            "clocks": clocks.clock_report(),
-            "columns": self.columns,
-            "notes": [
-                "host_* and shared_clock_* timestamps are taken when a packet is received by this PC; "
-                "Bluetooth adds a variable latency (typically 10-100 ms, packets may arrive in bursts). "
-                "For precise alignment, fit shimmer_time_s against host time (linear regression) per device.",
-                "shimmer_ticks continue across reconnects; wraps of the 24-bit counter during a "
-                "gap are estimated from the host clock.",
-                "For ECG devices the first 50 ms after each (re)start of streaming are discarded "
-                "(ADS1292R start-up zeros).",
-            ],
-            "devices": [{
-                "name": s.name, "mac": s.mac, "kind": s.kind, "firmware": s.firmware,
-                "sampling_rate_hz": s.rate, "link": s.link_desc,
-                "channels": [{"channel": sp.chan.name, "columns": sp.columns, "label": sp.label,
-                              "unit": sp.unit} for sp in s.specs],
-            } for s in self.sessions],
-            "events": self.events,
-            "summary": getattr(self, "summary", None),
-        }
-        tmp = self.meta_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        os.replace(tmp, self.meta_path)
-
-    def rename(self, user_name: str) -> Path:
-        """Prefix the files with a user-chosen name; the start timestamp is always kept."""
-        clean = re.sub(r"[^\w\-.]+", "_", user_name.strip()).strip("._")
-        if not clean:
-            return self.csv_path
-        base = f"{clean}_{self.base}"
-        new_csv = self.folder / f"{base}.csv"
-        new_meta = self.folder / f"{base}.meta.json"
-        os.replace(self.csv_path, new_csv)
-        meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
-        meta["file"] = new_csv.name
-        meta["recording_name"] = user_name
-        new_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        self.meta_path.unlink()
-        self.csv_path, self.meta_path, self.base = new_csv, new_meta, base
-        return new_csv
+        _json_dump(self.dir / "stop.json", {
+            "stop_unix_ns": stop_unix, "stop_shared_ticks": stop_shared, "write_error": self.write_error,
+            "devices": {st.mac: {"disconnects": st.disconnects, "downtime_s": st.downtime_s,
+                                 "longest_gap_s": st.longest_gap_s} for st in self.stats.values()},
+        })
+        log.info("recording stopped: %s", self.dir)
+        return self.dir

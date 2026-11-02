@@ -116,6 +116,7 @@ class ShimmerSession:
         self.no_contact_since = None
         self.events = deque(maxlen=200)
         self.recorder = None
+        self.taps = []                  # plugin inputs (see plugins.host.Tap)
         # internals
         self._stop = threading.Event()
         self._dev = None
@@ -341,6 +342,9 @@ class ShimmerSession:
             self._acc_n = 0                                   # never average across a gap
             if self.packets and self.ring is not None:        # NaN breaks the plotted line at the gap
                 self.ring.push(self._last_plot_t, [np.nan] * len(self.plot_specs))
+            if self.packets:
+                for tap in self.taps:
+                    tap.gap()
         else:
             ticks = self._ticks + (ts - self._prev_ts) % clocks.TS_WRAP
         self._prev_ts = ts
@@ -353,9 +357,11 @@ class ShimmerSession:
         self.packets += 1
 
         raws = [pkt[s.chan] for s in self.specs]
+        vals = []
         plot_vals = []
         for s, raw in zip(self.specs, raws):
             val = s.convert(raw) if s.convert else raw
+            vals.append(val)
             self.last_values[s.key] = val
             if s.kind == "vbatt":
                 self.battery_mv = val if self.battery_mv is None else 0.98 * self.battery_mv + 0.02 * val
@@ -387,9 +393,11 @@ class ShimmerSession:
                 self.ring.push(t_plot, self._acc / self._acc_n)
                 self._last_plot_t = t_plot
                 self._acc_n = 0
+        for tap in self.taps:
+            tap.push(ticks / clocks.TICKS_PER_S, self._plot_offset_s, [vals[i] for i in tap.indices])
         rec = self.recorder
         if rec is not None:
-            rec.put(self, hu, hs, ts, ticks, raws)
+            rec.put(self, hu, hs, ticks, vals)
 
     # ---------- helpers for the UI ----------
     def seconds_in_state(self) -> float:

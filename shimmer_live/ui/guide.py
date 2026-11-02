@@ -66,5 +66,11 @@ GUIDE_HTML = f"""
 <li>While recording, a <b>large red panel</b> counts how long a device has been lost, so you can decide whether to
     stop the experiment. Data from the other devices keeps being recorded.</li>
 <li>Battery warnings appear below 20% and become critical below 10%.</li>
+<li><b>Signals panel</b> (left): the eye shows or hides a signal in the plots; the dot chooses whether it is recorded.
+    Decide what to record <i>before</i> starting: the dots lock while recording.</li>
+<li><b>Keypoints</b> (defined in the Keypoints tab): while recording, press a keypoint button or its number key
+    (1&ndash;9). A coloured line appears on every plot and the mark is saved with every Shimmer's data.</li>
+<li><b>Stop recording</b> shows the quality checks and lets you add a name and notes before saving. The recording is
+    one .zip file with one CSV per Shimmer (Consensys layout), keypoints, quality checks and notes.</li>
 </ul>
 """

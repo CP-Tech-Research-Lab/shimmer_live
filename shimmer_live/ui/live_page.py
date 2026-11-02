@@ -1,18 +1,23 @@
-"""Live data page: real-time plots, status, alerts and recording."""
+"""Live data page: real-time plots, signal visibility/recording selection, keypoints, plugins, recording."""
+import datetime as dt
 import logging
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
-                               QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
+                               QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from .. import clocks
+from .. import keypoints as kpmod
+from ..plugins.host import PluginHost
 from ..recorder import Recorder
 from ..session import ShimmerSession, State, stop_all
-from .common import (CRITICAL, DEVICE_COLORS, GOOD, INK, MUTED, SURFACE, WARNING, AlertArea,
-                     fmt_duration, run_bg, set_if_changed, set_role)
+from .common import (CRITICAL, DEVICE_COLORS, GOOD, INK, MUTED, SURFACE, WARNING, AlertArea, fmt_duration, run_bg,
+                     set_if_changed, set_role)
 from .device_settings import DeviceInfoDialog
-from .dialogs import RecordingSummaryDialog, TimingInfoDialog
+from .dialogs import SaveRecordingDialog, TimingInfoDialog
+from .icons import icon, logo_pixmap
 
 log = logging.getLogger("shimmerlive.live")
 
@@ -20,19 +25,24 @@ BATTERY_WARN, BATTERY_CRIT = 20.0, 10.0
 LOW_RATE_FRACTION = 0.85
 DISK_WARN_BYTES = 1_000_000_000
 PLOT_ROW_PX = 170
+MARK_KEEP_S = 70.0                  # keypoint lines are kept a little longer than the longest window
 
 
 def display_unit(unit):
-    return {"uS": "µS", None: "raw"}.get(unit, unit)
+    return {"uS": "µS", None: "raw", "": ""}.get(unit, unit)
+
+
+def plugin_key(binding, output) -> str:
+    return f"plugin:{binding.cls.id}:{output.key}"
 
 
 pg.setConfigOptions(antialias=True, background=SURFACE, foreground=MUTED)
 
 
 class DeviceCard(QFrame):
-    def __init__(self, session: ShimmerSession):
+    def __init__(self, session: ShimmerSession, page):
         super().__init__()
-        self.s = session
+        self.s, self.page = session, page
         self.setStyleSheet("DeviceCard { background: white; border: 1px solid #dcdcd8; border-radius: 6px; }")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 6, 12, 6)
@@ -45,7 +55,9 @@ class DeviceCard(QFrame):
         self.line = QLabel()
         self.line2 = QLabel()
         self.line2.setStyleSheet(f"color: {MUTED};")
-        for w in (self.title, self.line, self.line2):
+        self.line3 = QLabel()
+        self.line3.setStyleSheet(f"color: {MUTED};")
+        for w in (self.title, self.line, self.line2, self.line3):
             col.addWidget(w)
         lay.addLayout(col)
         gear = QPushButton("⚙")
@@ -78,6 +90,43 @@ class DeviceCard(QFrame):
         rec = s.recorder
         recs = f" · recorded {rec.stats[s.mac].samples:,}" if rec and s.mac in rec.stats else ""
         set_if_changed(self.line2, f"{s.kind or 'Shimmer3'} · {s.firmware or '—'} · {s.packets:,} samples{recs}")
+        set_if_changed(self.line3, self.page.plugin_status(s))
+
+
+class SignalRow(QWidget):
+    """👁 show in live view · ● record · label."""
+
+    def __init__(self, label, visible, record, can_plot, on_change):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.eye = QToolButton()
+        self.eye.setCheckable(True)
+        self.eye.setChecked(visible and can_plot)
+        self.eye.setEnabled(can_plot)
+        self.eye.setToolTip("Show in live view" if can_plot else "Not plotted (shown on the device card)")
+        self.rec = QToolButton()
+        self.rec.setCheckable(True)
+        self.rec.setChecked(record)
+        self.rec.setToolTip("Record this signal (locked while recording)")
+        for b in (self.eye, self.rec):
+            b.setAutoRaise(True)
+            b.setFixedSize(26, 24)
+        lab = QLabel(label)
+        lab.setWordWrap(True)
+        lay.addWidget(self.eye)
+        lay.addWidget(self.rec)
+        lay.addWidget(lab, 1)
+        self._paint()
+        self.eye.toggled.connect(lambda _: (self._paint(), on_change()))
+        self.rec.toggled.connect(lambda _: (self._paint(), on_change()))
+
+    def _paint(self):
+        self.eye.setIcon(icon("eye" if self.eye.isChecked() else "eye_off",
+                              INK if self.eye.isEnabled() else "#b0b0ab"))
+        self.rec.setIcon(icon("rec_on" if self.rec.isChecked() else "rec_off",
+                              CRITICAL if self.rec.isChecked() else "#9a9a95"))
 
 
 class LivePage(QWidget):
@@ -87,13 +136,19 @@ class LivePage(QWidget):
         super().__init__()
         self.cfg = cfg
         self.sessions: list[ShimmerSession] = []
+        self.host: PluginHost | None = None
         self.recorder: Recorder | None = None
         self.t0 = clocks.perf_ns()
         self.window_s = 10.0
-        self._plots = []            # (session, series index, PlotItem, curve, spec, value label)
+        self._plots = []            # dicts: kind, session, binding, index, spec, plot, curve, value
         self._built_for = None
+        self._panel_for = None
+        self._bound = set()
         self._lost_seen = set()
         self._blink = False
+        self.rows = {}              # (mac, signal key) -> SignalRow
+        self.keypoints = []
+        self.marks = []             # [t_plot, name, color, [(plot, line), ...]]
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)
@@ -103,10 +158,19 @@ class LivePage(QWidget):
         self.btn_back = QPushButton("◀  Devices")
         self.btn_back.clicked.connect(self._on_back)
         bar.addWidget(self.btn_back)
+        logo = QLabel()
+        logo.setPixmap(logo_pixmap(32))
+        bar.addWidget(logo)
         t = QLabel("Live data")
-        t.setStyleSheet("font-size: 15pt; font-weight: 700; padding-left: 8px;")
+        t.setStyleSheet("font-size: 15pt; font-weight: 700; padding-left: 4px;")
         bar.addWidget(t)
         bar.addSpacing(16)
+        self.btn_panel = QPushButton("Signals ◂")
+        self.btn_panel.setCheckable(True)
+        self.btn_panel.setChecked(True)
+        self.btn_panel.setToolTip("Show/hide the signals panel (eye = show, dot = record)")
+        self.btn_panel.toggled.connect(self._toggle_panel)
+        bar.addWidget(self.btn_panel)
         bar.addWidget(QLabel("Window:"))
         self.win_combo = QComboBox()
         for s in (5, 10, 20, 30, 60):
@@ -134,7 +198,17 @@ class LivePage(QWidget):
 
         self.rec_label = QLabel()
         self.rec_label.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: 11pt;")
+        self.rec_label.setVisible(False)
         root.addWidget(self.rec_label)
+
+        # ---- keypoints bar ----
+        self.kp_bar = QHBoxLayout()
+        self.kp_bar.setSpacing(6)
+        root.addLayout(self.kp_bar)
+        self.kp_buttons = []
+        self.kp_feedback = QLabel()
+        self.kp_feedback.setStyleSheet(f"color: {MUTED};")
+        self._shortcuts = []
 
         # ---- device cards ----
         self.cards_row = QHBoxLayout()
@@ -157,41 +231,57 @@ class LivePage(QWidget):
         self.overlay.setVisible(False)
         root.addWidget(self.overlay)
 
-        # ---- alerts ----
         self.alerts = AlertArea()
         root.addWidget(self.alerts)
 
-        # ---- plots ----
+        # ---- signals panel + plots ----
+        body = QHBoxLayout()
+        self.panel = QWidget()
+        self.panel_lay = QVBoxLayout(self.panel)
+        self.panel_lay.setContentsMargins(0, 0, 6, 0)
+        self.panel_scroll = QScrollArea()
+        self.panel_scroll.setWidgetResizable(True)
+        self.panel_scroll.setFrameShape(QFrame.NoFrame)
+        self.panel_scroll.setWidget(self.panel)
+        self.panel_scroll.setFixedWidth(280)
+        self.panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body.addWidget(self.panel_scroll)
+        plots_col = QVBoxLayout()
         self.glw = pg.GraphicsLayoutWidget()
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setWidget(self.glw)
-        root.addWidget(self.scroll, 1)
+        plots_col.addWidget(self.scroll, 1)
         self.placeholder = QLabel("Connecting… plots appear as soon as a device streams.")
         self.placeholder.setAlignment(Qt.AlignCenter)
         self.placeholder.setStyleSheet(f"color: {MUTED}; font-size: 12pt;")
-        root.addWidget(self.placeholder)
+        plots_col.addWidget(self.placeholder)
+        body.addLayout(plots_col, 1)
+        root.addLayout(body, 1)
 
         self.plot_timer = QTimer(self, interval=50, timeout=self._update_plots)    # 20 fps
         self.status_timer = QTimer(self, interval=250, timeout=self._update_status)
         self._update_rec_buttons()
 
     # ---------------- lifecycle ----------------
-    def start(self, devices):
+    def start(self, devices, plugin_entries=()):
         self.t0 = clocks.perf_ns()
         self.sessions = [ShimmerSession(mac, name, self.cfg, DEVICE_COLORS[i % len(DEVICE_COLORS)], self.t0)
                          for i, (mac, name) in enumerate(devices)]
-        for c in self.cards:
-            c.deleteLater()
-        self.cards = [DeviceCard(s) for s in self.sessions]
+        self.host = PluginHost(list(plugin_entries))
+        self.cards = [DeviceCard(s, self) for s in self.sessions]
         for c in self.cards:
             self.cards_row.addWidget(c)
         self.cards_row.addStretch(1)
-        self._built_for = None
+        self._built_for = self._panel_for = None
+        self._bound = set()
         self._lost_seen.clear()
+        self.rows = {}
+        self.marks = []
         self.glw.clear()
         self._plots = []
+        self._build_keypoint_bar()
         for s in self.sessions:
             s.start()
         self.plot_timer.start()
@@ -202,17 +292,32 @@ class LivePage(QWidget):
         """Stop streaming and disconnect all devices (in the background)."""
         self.plot_timer.stop()
         self.status_timer.stop()
+        host, self.host = self.host, None
         sessions, self.sessions = self.sessions, []
-        run_bg(lambda: stop_all(sessions), lambda _: on_done(), name="stop-sessions")
-        while self.cards_row.count():
-            it = self.cards_row.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
+
+        def work():
+            if host is not None:
+                host.stop()
+            stop_all(sessions)
+        run_bg(work, lambda _: on_done(), name="stop-sessions")
+        for lay in (self.cards_row, self.panel_lay):
+            while lay.count():
+                it = lay.takeAt(0)
+                if it.widget():
+                    it.widget().deleteLater()
         self.cards = []
+        self.rows = {}
         self.glw.clear()
         self._plots = []
+        self.marks = []
         self.alerts.sync({})
         self.overlay.setVisible(False)
+
+    def stop_now(self, timeout=8.0):
+        """Blocking stop, used when the app closes."""
+        if self.host is not None:
+            self.host.stop()
+        stop_all(self.sessions, timeout=timeout)
 
     def _on_back(self):
         if self.recorder is not None:
@@ -223,50 +328,199 @@ class LivePage(QWidget):
             self.stop_recording()
         self.back.emit()
 
+    # ---------------- signal selection (eye / record) ----------------
+    def _sig_state(self, mac, key, default_visible=True) -> dict:
+        return self.cfg.data.setdefault("signals", {}).setdefault(mac, {}).setdefault(
+            key, {"visible": default_visible, "record": True})
+
+    def is_visible(self, mac, key):
+        row = self.rows.get((mac, key))
+        return row.eye.isChecked() if row else self._sig_state(mac, key)["visible"]
+
+    def is_recorded(self, mac, key):
+        row = self.rows.get((mac, key))
+        return row.rec.isChecked() if row else self._sig_state(mac, key)["record"]
+
+    def _signals_changed(self):
+        for (mac, key), row in self.rows.items():
+            st = self._sig_state(mac, key)
+            if row.eye.isEnabled():
+                st["visible"] = row.eye.isChecked()
+            st["record"] = row.rec.isChecked()
+        self.cfg.save()
+        self._built_for = None                      # rebuild plots with the new visibility
+
+    def _toggle_panel(self, on):
+        self.panel_scroll.setVisible(on)
+        self.btn_panel.setText("Signals ◂" if on else "Signals ▸")
+
+    def _rebuild_panel(self):
+        key = tuple((s.mac, s.specs is not None, tuple(b.cls.id for b in self._bindings(s))) for s in self.sessions)
+        if key == self._panel_for:
+            return
+        self._panel_for = key
+        while self.panel_lay.count():
+            it = self.panel_lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self.rows = {}
+        hint = QLabel("Eye: show in live view · Dot: record\nRecording choices lock when recording starts.")
+        hint.setStyleSheet(f"color: {MUTED}; font-size: 9pt;")
+        self.panel_lay.addWidget(hint)
+        for s in self.sessions:
+            title = QLabel(f"<span style='color:{s.color}'>●</span> <b>{s.name}</b>")
+            title.setStyleSheet("padding-top: 8px;")
+            self.panel_lay.addWidget(title)
+            if not s.specs:
+                w = QLabel("waiting for connection…")
+                w.setStyleSheet(f"color: {MUTED};")
+                self.panel_lay.addWidget(w)
+                continue
+            plotted = {sp.key for sp in s.plot_specs}
+            for sp in s.specs:
+                st = self._sig_state(s.mac, sp.key, sp.plot)
+                row = SignalRow(sp.label, st["visible"], st["record"], sp.key in plotted, self._signals_changed)
+                self.rows[(s.mac, sp.key)] = row
+                self.panel_lay.addWidget(row)
+            for b in self._bindings(s):
+                for o in b.cls.outputs:
+                    k = plugin_key(b, o)
+                    st = self._sig_state(s.mac, k)
+                    row = SignalRow(f"{b.cls.name}: {o.label}", st["visible"], st["record"], True,
+                                    self._signals_changed)
+                    self.rows[(s.mac, k)] = row
+                    self.panel_lay.addWidget(row)
+        self.panel_lay.addStretch(1)
+        self._lock_recording_choices(self.recorder is not None)
+
+    def _lock_recording_choices(self, locked):
+        for row in self.rows.values():
+            row.rec.setEnabled(not locked)
+
+    def _bindings(self, s):
+        return self.host.bindings_for(s) if self.host else []
+
+    # ---------------- keypoints ----------------
+    def _build_keypoint_bar(self):
+        while self.kp_bar.count():
+            it = self.kp_bar.takeAt(0)
+            w = it.widget()
+            if w is not None and w is not self.kp_feedback:
+                w.deleteLater()
+        for sc in self._shortcuts:
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self._shortcuts = []
+        self.keypoints = kpmod.load(self.cfg)
+        lab = QLabel("Keypoints:")
+        lab.setStyleSheet("font-weight: 600;")
+        self.kp_bar.addWidget(lab)
+        self.kp_buttons = []
+        for i, k in enumerate(self.keypoints):
+            b = QPushButton(f"{i + 1}  {k.name}" if i < 9 else k.name)
+            b.setStyleSheet(f"QPushButton {{ border-left: 6px solid {k.color}; }}")
+            b.setToolTip(f"Mark '{k.name}' now" + (f" (key {i + 1})" if i < 9 else "") + " — only while recording")
+            b.clicked.connect(lambda _=False, kp=k: self.mark(kp))
+            self.kp_bar.addWidget(b)
+            self.kp_buttons.append(b)
+            if i < 9:
+                sc = QShortcut(QKeySequence(str(i + 1)), self, context=Qt.WidgetWithChildrenShortcut)
+                sc.activated.connect(lambda kp=k: self.mark(kp))
+                self._shortcuts.append(sc)
+        self.kp_bar.addWidget(self.kp_feedback)
+        self.kp_bar.addStretch(1)
+        self._update_rec_buttons()
+
+    def mark(self, kp):
+        if self.recorder is None:
+            return
+        ev = self.recorder.keypoint(kp)
+        t_plot = (clocks.perf_ns() - self.t0) / 1e9
+        mark = [t_plot, kp.name, kp.color, []]
+        self.marks.append(mark)
+        for i, entry in enumerate(self._plots):
+            self._add_mark_line(mark, entry["plot"], label=(i == 0))
+        when = dt.datetime.fromtimestamp(ev["unix_ns"] / 1e9).strftime("%H:%M:%S")
+        self.kp_feedback.setText(f"<span style='color:{kp.color}'>■</span> '{kp.name}' marked at {when}")
+
+    @staticmethod
+    def _add_mark_line(mark, plot, label):
+        line = pg.InfiniteLine(pos=mark[0], angle=90, movable=False, pen=pg.mkPen(mark[2], width=2),
+                               label=mark[1] if label else None,
+                               labelOpts={"position": 0.92, "color": mark[2], "fill": (255, 255, 255, 210),
+                                          "movable": False})
+        plot.addItem(line)
+        mark[3].append((plot, line))
+
+    def _prune_marks(self, now):
+        keep = []
+        for m in self.marks:
+            if now - m[0] > MARK_KEEP_S:
+                for plot, line in m[3]:
+                    plot.removeItem(line)
+            else:
+                keep.append(m)
+        self.marks = keep
+
     # ---------------- plots ----------------
     def _rebuild_plots(self):
-        ready = tuple(s.mac for s in self.sessions if s.ring is not None)
-        if ready == self._built_for:
-            return
-        self._built_for = ready
-        self.glw.clear()
-        self._plots = []
-        first = None
-        row = 0
+        entries = []
         for s in self.sessions:
             if s.ring is None:
                 continue
-            for i, spec in enumerate(s.plot_specs):
-                p = self.glw.addPlot(row=row, col=0)
-                row += 1
-                # No background grid: its semi-transparent full-area lines were ~2/3 of the
-                # paint cost (26 -> 8 ms/frame). Axes with tick labels remain.
-                p.setLabel("left", display_unit(spec.unit))
-                p.setMouseEnabled(x=False, y=True)
-                p.enableAutoRange(axis="y")
-                p.setAutoVisible(y=True)
-                p.setMenuEnabled(False)
-                p.hideButtons()
-                if first is None:
-                    first = p
-                else:
-                    p.setXLink(first)
-                # Keep width 1: Qt strokes wider pens on dense signals ~30x slower (900 vs 29 ms/frame).
+            for i, sp in enumerate(s.plot_specs):
+                if self.is_visible(s.mac, sp.key):
+                    entries.append(("dev", s, None, i, sp))
+            for b in self._bindings(s):
+                for o in b.cls.outputs:
+                    if self.is_visible(s.mac, plugin_key(b, o)):
+                        entries.append(("plugin", s, b, o.key, o))
+        key = tuple((k, s.mac, id(b), i) for k, s, b, i, _ in entries)
+        if key == self._built_for:
+            return
+        self._built_for = key
+        self.glw.clear()
+        for m in self.marks:
+            m[3].clear()
+        self._plots = []
+        first = None
+        for row, (kind, s, b, i, spec) in enumerate(entries):
+            p = self.glw.addPlot(row=row, col=0)
+            # No background grid: its semi-transparent full-area lines were ~2/3 of the
+            # paint cost (26 -> 8 ms/frame). Axes with tick labels remain.
+            p.setLabel("left", display_unit(spec.unit))
+            p.setMouseEnabled(x=False, y=True)
+            p.enableAutoRange(axis="y")
+            p.setAutoVisible(y=True)
+            p.setMenuEnabled(False)
+            p.hideButtons()
+            if first is None:
+                first = p
+            else:
+                p.setXLink(first)
+            # Keep width 1: Qt strokes wider pens on dense signals ~30x slower (900 vs 29 ms/frame).
+            if kind == "plugin" and spec.style == "points":
+                curve = p.plot(pen=pg.mkPen(s.color, width=1), symbol="o", symbolSize=5,
+                               symbolBrush=s.color, symbolPen=None)
+            else:
                 curve = p.plot(pen=pg.mkPen(s.color, width=1))
-                # Peak downsampling keeps spikes visible while drawing ~1 point per pixel;
-                # without it a 60 s ECG window is 15k points per curve and painting stalls.
-                curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
-                p.setTitle(f"<span style='color:{INK}'><b>{s.name}</b> — {spec.label}</span>",
-                           size="9pt", justify="left")
-                # The live value floats in the title row's right corner; it is not part of the
-                # layout, so updating it never triggers a relayout of the whole plot grid.
-                value = pg.LabelItem(justify="right", color=MUTED, size="9pt")
-                value.setParentItem(p)
-                value.anchor(itemPos=(1, 0), parentPos=(1, 0), offset=(-8, 0))
-                self._plots.append((s, i, p, curve, spec, value))
+            # Peak downsampling keeps spikes visible while drawing ~1 point per pixel.
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method="peak")
+            label = f"{b.cls.name}: {spec.label}" if kind == "plugin" else spec.label
+            p.setTitle(f"<span style='color:{INK}'><b>{s.name}</b> — {label}</span>", size="9pt", justify="left")
+            # The live value floats in the title row's right corner; it is not part of the
+            # layout, so updating it never triggers a relayout of the whole plot grid.
+            value = pg.LabelItem(justify="right", color=MUTED, size="9pt")
+            value.setParentItem(p)
+            value.anchor(itemPos=(1, 0), parentPos=(1, 0), offset=(-8, 0))
+            entry = {"kind": kind, "session": s, "binding": b, "index": i, "spec": spec, "plot": p,
+                     "curve": curve, "value": value}
+            self._plots.append(entry)
+            for m in self.marks:
+                self._add_mark_line(m, p, label=(row == 0))
         if self._plots:
-            self._plots[-1][2].setLabel("bottom", "time since live view opened (s)")
+            self._plots[-1]["plot"].setLabel("bottom", "time since live view opened (s)")
         self.glw.setMinimumHeight(PLOT_ROW_PX * max(1, len(self._plots)))
         self.placeholder.setVisible(not self._plots)
         self.scroll.setVisible(bool(self._plots))
@@ -276,23 +530,56 @@ class LivePage(QWidget):
         now = (clocks.perf_ns() - self.t0) / 1e9
         x0 = now - self.window_s
         snaps = {}
-        for s, i, p, curve, spec, _ in self._plots:
-            if s.mac not in snaps:
-                t, y = s.ring.snapshot()
-                m = t >= x0 - 1.0
-                snaps[s.mac] = (t[m], y[:, m])
-            t, y = snaps[s.mac]
-            curve.setData(t, y[i], connect="finite")
-            p.setXRange(x0, now, padding=0)
+        for e in self._plots:
+            if e["kind"] == "dev":
+                s = e["session"]
+                if s.mac not in snaps:
+                    t, y = s.ring.snapshot()
+                    m = t >= x0 - 1.0
+                    snaps[s.mac] = (t[m], y[:, m])
+                t, y = snaps[s.mac]
+                e["curve"].setData(t, y[e["index"]], connect="finite")
+            else:
+                t, y = e["binding"].rings[e["index"]].snapshot()
+                m = t >= x0 - 30.0              # beat series are sparse: keep the previous points
+                e["curve"].setData(t[m], y[0, m])
+            e["plot"].setXRange(x0, now, padding=0)
+        self._prune_marks(now)
 
     # ---------------- status, alerts ----------------
+    def plugin_status(self, s) -> str:
+        if not self.host or not self.host.entries:
+            return ""
+        parts = []
+        for entry in self.host.entries:
+            b = next((x for x in self._bindings(s) if x.cls is entry.cls), None)
+            if b is not None:
+                if b.error:
+                    parts.append(f"<span style='color:{CRITICAL}'>{entry.cls.name} ✖</span>")
+                else:
+                    first = entry.cls.outputs[0] if entry.cls.outputs else None
+                    val = f" {b.last[first.key]:.0f} {first.unit}" if first and first.key in b.last else ""
+                    parts.append(f"<span style='color:{GOOD}'>{entry.cls.name} ✔</span>{val}")
+            elif (entry.cls.id, s.mac) in self.host.unmatched:
+                parts.append(f"{entry.cls.name}: n/a ({self.host.unmatched[(entry.cls.id, s.mac)]})")
+        return "Plugins: " + " · ".join(parts) if parts else ""
+
     def _update_status(self):
+        if self.host is not None:
+            for s in self.sessions:
+                if s.specs and s.mac not in self._bound:
+                    self._bound.add(s.mac)
+                    self.host.bind(s)
+        self._rebuild_panel()
         for c in self.cards:
             c.refresh()
-        for s, i, p, curve, spec, value in self._plots:
-            v = s.last_values.get(spec.key)
-            val = f"{v:.4g} {display_unit(spec.unit)}" if isinstance(v, (int, float)) and v == v else "—"
-            set_if_changed(value, f"now {val}")
+        for e in self._plots:
+            if e["kind"] == "dev":
+                v = e["session"].last_values.get(e["spec"].key)
+            else:
+                v = e["binding"].last.get(e["index"])
+            val = f"{v:.4g} {display_unit(e['spec'].unit)}" if isinstance(v, (int, float)) and v == v else "—"
+            set_if_changed(e["value"], f"now {val}")
         self._update_alerts()
         self._update_overlay()
         self._update_rec_label()
@@ -340,6 +627,10 @@ class LivePage(QWidget):
                                                   f"it may switch off soon.", None)
                 elif s.battery_pct < BATTERY_WARN:
                     a[f"batt-{k}"] = ("warning", f"{s.name}: battery low ({s.battery_pct:.0f}%).", None)
+            for b in self._bindings(s):
+                if b.error:
+                    a[f"plugin-{k}-{b.cls.id}"] = ("warning", f"Plugin {b.cls.name} on {s.name} stopped: {b.error}",
+                                                   None)
         rec = self.recorder
         if rec is not None:
             if rec.write_error:
@@ -349,13 +640,13 @@ class LivePage(QWidget):
                 a["disk"] = ("warning", f"Low disk space: {free / 1e9:.2f} GB left in {rec.folder}", None)
             missing = [s.name for s in self.sessions if s.specs and s.mac not in rec.stats]
             if missing:
-                a["rec-missing"] = ("warning", f"Not part of this recording (connected after it started): "
-                                               f"{', '.join(missing)}", None)
+                a["rec-missing"] = ("warning", f"Not part of this recording (connected after it started, or "
+                                               f"nothing selected to record): {', '.join(missing)}", None)
         self.alerts.sync(a)
 
     def _update_overlay(self):
         rec = self.recorder
-        lost = [s for s in self.sessions if s.state == State.LOST] if rec else []
+        lost = [s for s in self.sessions if s.state == State.LOST and s.mac in rec.stats] if rec else []
         if not lost:
             if not self.overlay.isHidden():
                 self.overlay.setVisible(False)
@@ -384,6 +675,8 @@ class LivePage(QWidget):
         self.btn_stop.setEnabled(recording)
         self.btn_folder.setEnabled(not recording)
         self.btn_folder.setToolTip(f"Recordings are saved in {self.cfg.recordings_dir}")
+        for b in self.kp_buttons:
+            b.setEnabled(recording)
 
     def _update_rec_label(self):
         rec = self.recorder
@@ -395,7 +688,7 @@ class LivePage(QWidget):
         n = sum(st.samples for st in rec.stats.values())
         dot = "●" if int(rec.elapsed_s() * 2) % 2 == 0 else "○"
         set_if_changed(self.rec_label, f"{dot} REC {fmt_duration(rec.elapsed_s())}  ·  {n:,} samples  ·  "
-                                       f"{rec.csv_path.name}")
+                                       f"{len(rec.keypoints)} keypoint(s)")
         if self.rec_label.isHidden():
             self.rec_label.setVisible(True)
 
@@ -409,6 +702,16 @@ class LivePage(QWidget):
         not_ready = [s for s in self.sessions if not s.specs]
         if not ready:
             return
+        record_keys = {s.mac: {sp.key for sp in s.specs if self.is_recorded(s.mac, sp.key)} for s in ready}
+        plugin_outputs = {}
+        for s in ready:
+            for b in self._bindings(s):
+                if b.error is None:
+                    plugin_outputs[b] = {o.key for o in b.cls.outputs if self.is_recorded(s.mac, plugin_key(b, o))}
+        if not any(record_keys.values()) and not any(plugin_outputs.values()):
+            QMessageBox.warning(self, "Start recording", "Nothing is selected for recording (the dot buttons in "
+                                                         "the Signals panel).")
+            return
         if not_ready:
             names = ", ".join(s.name for s in not_ready)
             if QMessageBox.question(self, "Start recording",
@@ -421,20 +724,27 @@ class LivePage(QWidget):
                                          f"missing until it reconnects.\n\nStart anyway?") != QMessageBox.Yes:
             return
         try:
-            self.recorder = Recorder(self.cfg.recordings_dir, ready)
+            self.recorder = Recorder(self.cfg.recordings_dir, ready, record_keys, plugin_outputs, self.keypoints)
         except OSError as e:
-            QMessageBox.critical(self, "Cannot record", f"Could not create the recording file in "
+            QMessageBox.critical(self, "Cannot record", f"Could not create the recording in "
                                                         f"{self.cfg.recordings_dir}:\n{e}")
             return
+        if self.host is not None:
+            self.host.recorder = self.recorder
+        self._lock_recording_choices(True)
+        self.kp_feedback.setText("")
         self._update_status()
 
     def stop_recording(self):
         rec, self.recorder = self.recorder, None
         if rec is None:
             return
-        summary = rec.stop()
+        if self.host is not None:
+            self.host.recorder = None
+        folder = rec.stop()
+        self._lock_recording_choices(False)
         self._update_status()
-        RecordingSummaryDialog(self, rec, summary).exec()
+        SaveRecordingDialog(self, folder).exec()
 
     @property
     def recording(self):
