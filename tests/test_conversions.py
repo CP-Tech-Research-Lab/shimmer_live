@@ -3,8 +3,10 @@ import math
 import pytest
 from pyshimmer import EChannelType as E
 
-from shimmer_live.conversions import (EXG_FULL_SCALE, battery_percent, build_specs, device_kind, exg_saturated,
-                                      exg_to_mv, gsr_raw_to_us, vbatt_raw_to_mv)
+import numpy as np
+
+from shimmer_live.conversions import (CALIBRATION_DOC, EXG_FULL_SCALE, battery_percent, build_specs, calibrate_array,
+                                      device_kind, exg_saturated, exg_to_mv, gsr_raw_to_us, vbatt_raw_to_mv)
 
 
 def test_gsr_high_range_matches_device_reading():
@@ -58,3 +60,23 @@ def test_device_kind():
     assert device_kind([E.VBATT, E.GSR_RAW]) == "GSR+"
     assert device_kind([E.EXG_ADS1292R_1_CH1_24BIT]) == "ECG/ExG"
     assert device_kind([E.VBATT]) == "Shimmer3"
+
+
+def test_vectorised_calibration_matches_live_conversion():
+    """Recordings in raw mode are calibrated later with calibrate_array: it must agree with the live path."""
+    gsr = np.array([49855, 2048, (1 << 14) | 1500, (2 << 14) | 3000, (3 << 14) | 600])
+    expected = [gsr_raw_to_us(int(r)) for r in gsr]
+    np.testing.assert_allclose(calibrate_array({"formula": "gsr"}, gsr), expected, equal_nan=True)
+    exg = np.array([0, 300_000, -(2 ** 23), EXG_FULL_SCALE])
+    np.testing.assert_allclose(calibrate_array({"formula": "exg", "gain": 6}, exg), [exg_to_mv(6)(int(r)) for r in exg])
+    np.testing.assert_allclose(calibrate_array({"formula": "vbatt"}, [2800]), [vbatt_raw_to_mv(2800)])
+    assert calibrate_array({}, [5])[0] == 5
+    assert set(CALIBRATION_DOC) == {"exg", "gsr", "vbatt", None}
+
+
+def test_specs_carry_calibration_parameters():
+    specs = {s.key: s for s in build_specs([E.GSR_RAW, E.EXG_ADS1292R_1_CH1_24BIT, E.EXG_ADS1292R_1_STATUS],
+                                           {(0, 0): 12})}
+    assert specs["EXG1_CH1"].calibration == {"formula": "exg", "gain": 12}
+    assert specs["GSR"].calibration == {"formula": "gsr"}
+    assert specs["EXG1_STATUS"].calibration == {}

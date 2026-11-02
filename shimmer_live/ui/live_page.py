@@ -3,20 +3,21 @@ import datetime as dt
 import logging
 
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-                               QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QMessageBox, QPushButton, QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from .. import clocks
 from .. import keypoints as kpmod
 from ..plugins.host import PluginHost
-from ..recorder import Recorder
+from ..recorder import VALUES_CAL, VALUES_RAW, Recorder
 from ..session import ShimmerSession, State, stop_all
-from .common import (CRITICAL, DEVICE_COLORS, GOOD, INK, MUTED, SURFACE, WARNING, AlertArea, fmt_duration, run_bg,
-                     set_if_changed, set_role)
+from .common import (CRITICAL, DEVICE_COLORS, FONT_BASE, FONT_L, FONT_M, FONT_S, FONT_XS, FONT_XXL, GOOD, ICON_BTN,
+                     INK, MUTED, SURFACE, WARNING, AlertArea, FlowLayout, fmt_duration, run_bg, set_if_changed,
+                     set_role)
 from .device_settings import DeviceInfoDialog
-from .dialogs import SaveRecordingDialog, TimingInfoDialog
+from .dialogs import CalibrationDialog, SaveRecordingDialog, TimingInfoDialog
 from .icons import icon, logo_pixmap
 
 log = logging.getLogger("shimmerlive.live")
@@ -24,7 +25,8 @@ log = logging.getLogger("shimmerlive.live")
 BATTERY_WARN, BATTERY_CRIT = 20.0, 10.0
 LOW_RATE_FRACTION = 0.85
 DISK_WARN_BYTES = 1_000_000_000
-PLOT_ROW_PX = 170
+PLOT_ROW_PX = 190
+PANEL_WIDTH = 320
 MARK_KEEP_S = 70.0                  # keypoint lines are kept a little longer than the longest window
 
 
@@ -45,24 +47,26 @@ class DeviceCard(QFrame):
         self.s, self.page = session, page
         self.setStyleSheet("DeviceCard { background: white; border: 1px solid #dcdcd8; border-radius: 6px; }")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 6, 12, 6)
+        lay.setContentsMargins(12, 8, 12, 8)
         sw = QLabel("●")
-        sw.setStyleSheet(f"color: {session.color}; font-size: 18pt;")
+        sw.setStyleSheet(f"color: {session.color}; font-size: 22pt;")
         lay.addWidget(sw)
         col = QVBoxLayout()
         col.setSpacing(0)
-        self.title = QLabel(f"<b>{session.name}</b> <span style='color:{MUTED}'>{session.mac}</span>")
+        self.title = QLabel(f"<span style='font-size:{FONT_M}pt; font-weight:700'>{session.name}</span> "
+                            f"<span style='color:{MUTED}; font-size:{FONT_S}pt'>{session.mac}</span>")
         self.line = QLabel()
         self.line2 = QLabel()
-        self.line2.setStyleSheet(f"color: {MUTED};")
+        self.line2.setStyleSheet(f"color: {MUTED}; font-size: {FONT_S}pt;")
         self.line3 = QLabel()
-        self.line3.setStyleSheet(f"color: {MUTED};")
+        self.line3.setStyleSheet(f"color: {MUTED}; font-size: {FONT_S}pt;")
         for w in (self.title, self.line, self.line2, self.line3):
             col.addWidget(w)
         lay.addLayout(col)
         gear = QPushButton("⚙")
         gear.setToolTip("Device info")
-        gear.setFixedWidth(34)
+        gear.setFixedSize(ICON_BTN + 4, ICON_BTN + 4)
+        gear.setStyleSheet(f"font-size: {FONT_M}pt; padding: 0; min-height: 0;")
         gear.clicked.connect(lambda: DeviceInfoDialog(self, self.s).exec())
         lay.addWidget(gear, 0, Qt.AlignTop)
 
@@ -100,7 +104,7 @@ class SignalRow(QWidget):
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(2)
         self.eye = QToolButton()
         self.eye.setCheckable(True)
         self.eye.setChecked(visible and can_plot)
@@ -112,7 +116,8 @@ class SignalRow(QWidget):
         self.rec.setToolTip("Record this signal (locked while recording)")
         for b in (self.eye, self.rec):
             b.setAutoRaise(True)
-            b.setFixedSize(26, 24)
+            b.setFixedSize(ICON_BTN, ICON_BTN - 4)
+            b.setIconSize(QSize(20, 20))
         lab = QLabel(label)
         lab.setWordWrap(True)
         lay.addWidget(self.eye)
@@ -159,10 +164,9 @@ class LivePage(QWidget):
         self.btn_back.clicked.connect(self._on_back)
         bar.addWidget(self.btn_back)
         logo = QLabel()
-        logo.setPixmap(logo_pixmap(32))
+        logo.setPixmap(logo_pixmap(40))
         bar.addWidget(logo)
-        t = QLabel("Live data")
-        t.setStyleSheet("font-size: 15pt; font-weight: 700; padding-left: 4px;")
+        t = set_role(QLabel("Live data"), "title")
         bar.addWidget(t)
         bar.addSpacing(16)
         self.btn_panel = QPushButton("Signals ◂")
@@ -180,34 +184,39 @@ class LivePage(QWidget):
                                                                      float(self.win_combo.currentData())))
         bar.addWidget(self.win_combo)
         bar.addStretch(1)
-        self.btn_info = QPushButton("ⓘ Timestamps")
+        self.btn_info = set_role(QPushButton("ⓘ Timestamps"), "small")
         self.btn_info.setToolTip("Which system clocks are recorded and how to synchronise other systems")
         self.btn_info.clicked.connect(lambda: TimingInfoDialog(self).exec())
         bar.addWidget(self.btn_info)
-        self.btn_folder = QPushButton("Folder…")
+        self.btn_folder = set_role(QPushButton("Folder…"), "small")
         self.btn_folder.clicked.connect(self._choose_folder)
         bar.addWidget(self.btn_folder)
         self.btn_rec = QPushButton("●  Start recording")
         set_role(self.btn_rec, "record")
         self.btn_rec.clicked.connect(self.start_recording)
-        self.btn_stop = QPushButton("■  Stop recording")
+        self.btn_stop = set_role(QPushButton("■  Stop recording"), "stop")
         self.btn_stop.clicked.connect(self.stop_recording)
         bar.addWidget(self.btn_rec)
         bar.addWidget(self.btn_stop)
         root.addLayout(bar)
 
         self.rec_label = QLabel()
-        self.rec_label.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: 11pt;")
+        self.rec_label.setStyleSheet(f"color: {CRITICAL}; font-weight: 800; font-size: {FONT_L}pt;")
         self.rec_label.setVisible(False)
-        root.addWidget(self.rec_label)
-
-        # ---- keypoints bar ----
-        self.kp_bar = QHBoxLayout()
-        self.kp_bar.setSpacing(6)
-        root.addLayout(self.kp_bar)
-        self.kp_buttons = []
         self.kp_feedback = QLabel()
-        self.kp_feedback.setStyleSheet(f"color: {MUTED};")
+        self.kp_feedback.setStyleSheet(f"color: {INK}; font-size: {FONT_BASE}pt; font-weight: 600;")
+        rec_row = QHBoxLayout()
+        rec_row.addWidget(self.rec_label)
+        rec_row.addSpacing(16)
+        rec_row.addWidget(self.kp_feedback)
+        rec_row.addStretch(1)
+        root.addLayout(rec_row)
+
+        # ---- keypoints bar (wraps to a second row on narrow windows) ----
+        kp_holder = QWidget()
+        self.kp_bar = FlowLayout(kp_holder, spacing=8)
+        root.addWidget(kp_holder)
+        self.kp_buttons = []
         self._shortcuts = []
 
         # ---- device cards ----
@@ -220,10 +229,11 @@ class LivePage(QWidget):
         self.overlay = QFrame()
         ov = QVBoxLayout(self.overlay)
         self.overlay_title = QLabel()
-        self.overlay_title.setStyleSheet("color: white; font-size: 22pt; font-weight: 800;")
+        self.overlay_title.setStyleSheet(f"color: white; font-size: {FONT_XXL}pt; font-weight: 800;")
         self.overlay_title.setAlignment(Qt.AlignCenter)
+        self.overlay_title.setWordWrap(True)          # never widen the window on small screens
         self.overlay_text = QLabel()
-        self.overlay_text.setStyleSheet("color: white; font-size: 11pt;")
+        self.overlay_text.setStyleSheet(f"color: white; font-size: {FONT_M}pt;")
         self.overlay_text.setAlignment(Qt.AlignCenter)
         self.overlay_text.setWordWrap(True)
         ov.addWidget(self.overlay_title)
@@ -243,9 +253,14 @@ class LivePage(QWidget):
         self.panel_scroll.setWidgetResizable(True)
         self.panel_scroll.setFrameShape(QFrame.NoFrame)
         self.panel_scroll.setWidget(self.panel)
-        self.panel_scroll.setFixedWidth(280)
         self.panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        body.addWidget(self.panel_scroll)
+        self.left = QWidget()
+        self.left.setFixedWidth(PANEL_WIDTH)
+        left_lay = QVBoxLayout(self.left)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.addWidget(self._values_box())
+        left_lay.addWidget(self.panel_scroll, 1)
+        body.addWidget(self.left)
         plots_col = QVBoxLayout()
         self.glw = pg.GraphicsLayoutWidget()
         self.scroll = QScrollArea()
@@ -255,7 +270,7 @@ class LivePage(QWidget):
         plots_col.addWidget(self.scroll, 1)
         self.placeholder = QLabel("Connecting… plots appear as soon as a device streams.")
         self.placeholder.setAlignment(Qt.AlignCenter)
-        self.placeholder.setStyleSheet(f"color: {MUTED}; font-size: 12pt;")
+        self.placeholder.setStyleSheet(f"color: {MUTED}; font-size: {FONT_L}pt;")
         plots_col.addWidget(self.placeholder)
         body.addLayout(plots_col, 1)
         root.addLayout(body, 1)
@@ -350,8 +365,39 @@ class LivePage(QWidget):
         self.cfg.save()
         self._built_for = None                      # rebuild plots with the new visibility
 
+    def _values_box(self):
+        """Raw (default) or calibrated values in recordings; locked while recording."""
+        box = QFrame()
+        box.setObjectName("valuesBox")
+        box.setStyleSheet("QFrame#valuesBox { background: white; border: 1px solid #dcdcd8; border-radius: 8px; }")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(4)
+        v.addWidget(set_role(QLabel("Values to record"), "section"))
+        self.values_group = QButtonGroup(self)
+        self.rb_raw = QRadioButton("Raw device values (default)")
+        self.rb_cal = QRadioButton("Calibrated (mV, µS)")
+        for i, rb in enumerate((self.rb_raw, self.rb_cal)):
+            self.values_group.addButton(rb, i)
+            v.addWidget(rb)
+        (self.rb_cal if self.cfg.data.get("record_values") == VALUES_CAL else self.rb_raw).setChecked(True)
+        self.values_group.idToggled.connect(self._values_changed)
+        info = set_role(QPushButton("ⓘ How values are calibrated"), "small")
+        info.clicked.connect(lambda: CalibrationDialog(self).exec())
+        v.addWidget(info, 0, Qt.AlignLeft)
+        return box
+
+    def _values_changed(self, _id, checked):
+        if checked:
+            self.cfg.data["record_values"] = VALUES_CAL if self.rb_cal.isChecked() else VALUES_RAW
+            self.cfg.save()
+
+    @property
+    def record_values(self):
+        return VALUES_CAL if self.rb_cal.isChecked() else VALUES_RAW
+
     def _toggle_panel(self, on):
-        self.panel_scroll.setVisible(on)
+        self.left.setVisible(on)
         self.btn_panel.setText("Signals ◂" if on else "Signals ▸")
 
     def _rebuild_panel(self):
@@ -364,16 +410,16 @@ class LivePage(QWidget):
             if it.widget():
                 it.widget().deleteLater()
         self.rows = {}
-        hint = QLabel("Eye: show in live view · Dot: record\nRecording choices lock when recording starts.")
-        hint.setStyleSheet(f"color: {MUTED}; font-size: 9pt;")
+        hint = set_role(QLabel("Eye: show in live view · Dot: record.\nRecording choices lock when recording "
+                               "starts."), "muted")
+        hint.setWordWrap(True)
         self.panel_lay.addWidget(hint)
         for s in self.sessions:
-            title = QLabel(f"<span style='color:{s.color}'>●</span> <b>{s.name}</b>")
-            title.setStyleSheet("padding-top: 8px;")
+            title = QLabel(f"<span style='color:{s.color}'>●</span> {s.name}")
+            title.setStyleSheet(f"padding-top: 12px; font-size: {FONT_M}pt; font-weight: 700;")
             self.panel_lay.addWidget(title)
             if not s.specs:
-                w = QLabel("waiting for connection…")
-                w.setStyleSheet(f"color: {MUTED};")
+                w = set_role(QLabel("waiting for connection…"), "muted")
                 self.panel_lay.addWidget(w)
                 continue
             plotted = {sp.key for sp in s.plot_specs}
@@ -396,6 +442,8 @@ class LivePage(QWidget):
     def _lock_recording_choices(self, locked):
         for row in self.rows.values():
             row.rec.setEnabled(not locked)
+        for rb in (self.rb_raw, self.rb_cal):
+            rb.setEnabled(not locked)
 
     def _bindings(self, s):
         return self.host.bindings_for(s) if self.host else []
@@ -405,20 +453,21 @@ class LivePage(QWidget):
         while self.kp_bar.count():
             it = self.kp_bar.takeAt(0)
             w = it.widget()
-            if w is not None and w is not self.kp_feedback:
+            if w is not None:
                 w.deleteLater()
         for sc in self._shortcuts:
             sc.setEnabled(False)
             sc.deleteLater()
         self._shortcuts = []
         self.keypoints = kpmod.load(self.cfg)
-        lab = QLabel("Keypoints:")
-        lab.setStyleSheet("font-weight: 600;")
+        lab = set_role(QLabel("Keypoints"), "section")
+        lab.setAlignment(Qt.AlignVCenter)
+        lab.setMinimumHeight(44)
         self.kp_bar.addWidget(lab)
         self.kp_buttons = []
         for i, k in enumerate(self.keypoints):
-            b = QPushButton(f"{i + 1}  {k.name}" if i < 9 else k.name)
-            b.setStyleSheet(f"QPushButton {{ border-left: 6px solid {k.color}; }}")
+            b = set_role(QPushButton(f"{i + 1}   {k.name}" if i < 9 else k.name), "keypoint")
+            b.setStyleSheet(f"QPushButton {{ border-left: 10px solid {k.color}; }}")
             b.setToolTip(f"Mark '{k.name}' now" + (f" (key {i + 1})" if i < 9 else "") + " — only while recording")
             b.clicked.connect(lambda _=False, kp=k: self.mark(kp))
             self.kp_bar.addWidget(b)
@@ -427,8 +476,6 @@ class LivePage(QWidget):
                 sc = QShortcut(QKeySequence(str(i + 1)), self, context=Qt.WidgetWithChildrenShortcut)
                 sc.activated.connect(lambda kp=k: self.mark(kp))
                 self._shortcuts.append(sc)
-        self.kp_bar.addWidget(self.kp_feedback)
-        self.kp_bar.addStretch(1)
         self._update_rec_buttons()
 
     def mark(self, kp):
@@ -447,8 +494,10 @@ class LivePage(QWidget):
     def _add_mark_line(mark, plot, label):
         line = pg.InfiniteLine(pos=mark[0], angle=90, movable=False, pen=pg.mkPen(mark[2], width=2),
                                label=mark[1] if label else None,
-                               labelOpts={"position": 0.92, "color": mark[2], "fill": (255, 255, 255, 210),
+                               labelOpts={"position": 0.92, "color": mark[2], "fill": (255, 255, 255, 220),
                                           "movable": False})
+        if label:
+            line.label.setFont(QFont(QApplication.font().family(), int(round(FONT_S)), QFont.Bold))
         plot.addItem(line)
         mark[3].append((plot, line))
 
@@ -488,7 +537,9 @@ class LivePage(QWidget):
             p = self.glw.addPlot(row=row, col=0)
             # No background grid: its semi-transparent full-area lines were ~2/3 of the
             # paint cost (26 -> 8 ms/frame). Axes with tick labels remain.
-            p.setLabel("left", display_unit(spec.unit))
+            p.setLabel("left", display_unit(spec.unit), **{"font-size": f"{FONT_S}pt"})
+            for side in ("left", "bottom"):
+                p.getAxis(side).setTickFont(QFont(QApplication.font().family(), int(round(FONT_XS))))
             p.setMouseEnabled(x=False, y=True)
             p.enableAutoRange(axis="y")
             p.setAutoVisible(y=True)
@@ -500,7 +551,7 @@ class LivePage(QWidget):
                 p.setXLink(first)
             # Keep width 1: Qt strokes wider pens on dense signals ~30x slower (900 vs 29 ms/frame).
             if kind == "plugin" and spec.style == "points":
-                curve = p.plot(pen=pg.mkPen(s.color, width=1), symbol="o", symbolSize=5,
+                curve = p.plot(pen=pg.mkPen(s.color, width=1), symbol="o", symbolSize=7,
                                symbolBrush=s.color, symbolPen=None)
             else:
                 curve = p.plot(pen=pg.mkPen(s.color, width=1))
@@ -508,10 +559,11 @@ class LivePage(QWidget):
             curve.setClipToView(True)
             curve.setDownsampling(auto=True, method="peak")
             label = f"{b.cls.name}: {spec.label}" if kind == "plugin" else spec.label
-            p.setTitle(f"<span style='color:{INK}'><b>{s.name}</b> — {label}</span>", size="9pt", justify="left")
+            p.setTitle(f"<span style='color:{INK}'><b>{s.name}</b> — {label}</span>", size=f"{FONT_BASE}pt",
+                       justify="left")
             # The live value floats in the title row's right corner; it is not part of the
             # layout, so updating it never triggers a relayout of the whole plot grid.
-            value = pg.LabelItem(justify="right", color=MUTED, size="9pt")
+            value = pg.LabelItem(justify="right", color=INK, size=f"{FONT_BASE}pt")
             value.setParentItem(p)
             value.anchor(itemPos=(1, 0), parentPos=(1, 0), offset=(-8, 0))
             entry = {"kind": kind, "session": s, "binding": b, "index": i, "spec": spec, "plot": p,
@@ -520,7 +572,7 @@ class LivePage(QWidget):
             for m in self.marks:
                 self._add_mark_line(m, p, label=(row == 0))
         if self._plots:
-            self._plots[-1]["plot"].setLabel("bottom", "time since live view opened (s)")
+            self._plots[-1]["plot"].setLabel("bottom", "time since live view opened (s)", **{"font-size": f"{FONT_S}pt"})
         self.glw.setMinimumHeight(PLOT_ROW_PX * max(1, len(self._plots)))
         self.placeholder.setVisible(not self._plots)
         self.scroll.setVisible(bool(self._plots))
@@ -724,7 +776,8 @@ class LivePage(QWidget):
                                          f"missing until it reconnects.\n\nStart anyway?") != QMessageBox.Yes:
             return
         try:
-            self.recorder = Recorder(self.cfg.recordings_dir, ready, record_keys, plugin_outputs, self.keypoints)
+            self.recorder = Recorder(self.cfg.recordings_dir, ready, record_keys, plugin_outputs, self.keypoints,
+                                     values=self.record_values)
         except OSError as e:
             QMessageBox.critical(self, "Cannot record", f"Could not create the recording in "
                                                         f"{self.cfg.recordings_dir}:\n{e}")

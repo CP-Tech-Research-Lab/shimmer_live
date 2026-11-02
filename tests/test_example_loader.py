@@ -34,7 +34,7 @@ def test_loader_reads_zip(tmp_path, clock):
     gsr = rec["devices"]["Shimmer3-401F"]
     assert list(gsr.columns[:3]) == ["Shimmer3-401F_Timestamp_Unix_CAL", "Shimmer3-401F_Timestamp_Shared_CAL",
                                      "Shimmer3-401F_Timestamp_CAL"]
-    assert len(gsr) == 96 and gsr["Shimmer3-401F_GSR_Skin_Conductance_CAL"].iloc[0] > 1
+    assert len(gsr) == 96 and gsr["Shimmer3-401F_GSR_Skin_Conductance_RAW"].iloc[0] == 2048    # raw by default
     assert (gsr["Shimmer3-401F_Keypoint"] == "rest start").sum() == 1
     assert rec["units"]["Shimmer3-8395.csv"][:3] == ["ms", "s", "ms"]
     hrv = rec["plugins"]["HRV - Shimmer3-8395"]

@@ -42,7 +42,7 @@ class Capture:
     def __init__(self):
         self.rows, self.events = [], []
 
-    def put(self, session, host_unix_ns, shared_ticks, ticks, vals):
+    def put(self, session, host_unix_ns, shared_ticks, ticks, vals, raws):
         self.rows.append((shared_ticks, ticks, vals))
 
     def event(self, session, kind, unix_ns, perf_ns, text):

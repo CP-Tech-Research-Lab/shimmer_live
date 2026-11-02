@@ -397,7 +397,7 @@ class ShimmerSession:
             tap.push(ticks / clocks.TICKS_PER_S, self._plot_offset_s, [vals[i] for i in tap.indices])
         rec = self.recorder
         if rec is not None:
-            rec.put(self, hu, hs, ticks, vals)
+            rec.put(self, hu, hs, ticks, vals, raws)
 
     # ---------- helpers for the UI ----------
     def seconds_in_state(self) -> float:

@@ -12,7 +12,7 @@ import pytest
 from shimmer_live import clocks, export
 from shimmer_live.keypoints import Keypoint
 from shimmer_live.plugins.api import OutputSpec, SignalInfo
-from shimmer_live.recorder import Recorder
+from shimmer_live.recorder import VALUES_CAL, Recorder
 from shimmer_live.session import State
 
 from .conftest import ECG_CHANNELS, ECG_GAINS, GSR_CHANNELS, make_session, packet, reconnect
@@ -85,7 +85,7 @@ def test_full_pipeline(tmp_path, clock, latency, pair):
     binding = FakeBinding(ecg)
     rec = Recorder(tmp_path / "rec", [gsr, ecg],
                    {gsr.mac: ALL_GSR, ecg.mac: ALL_ECG - {"EXG2_CH2"}},     # Vx-RL not recorded
-                   {binding: {"hr"}}, [REST, TASK])
+                   {binding: {"hr"}}, [REST, TASK], values=VALUES_CAL)
     truth = {}
     values = {"gsr": {"GSR_RAW": 2048, "VBATT": 2800},
               "ecg": {"EXG_ADS1292R_1_CH1_24BIT": 300_000, "EXG_ADS1292R_1_CH2_24BIT": 100_000}}
@@ -214,3 +214,32 @@ def test_ecg_quality_checks():
     lead_off = np.full_like(t, -605.0)
     res = {q.check: q.status for q in qc.check_ecg("d", "ECG", lead_off, rate, 605.0)}
     assert res["Saturation"] == "FAIL" and res["Flat signal"] == "FAIL"
+
+
+def test_raw_values_are_default_and_documented(tmp_path, clock, latency, pair):
+    gsr, ecg = pair
+    rec = Recorder(tmp_path / "rec", [gsr, ecg], {gsr.mac: ALL_GSR, ecg.mac: ALL_ECG}, {}, [])
+    assert rec.values == "raw"
+    values = {"gsr": {"GSR_RAW": (1 << 14) | 1500, "VBATT": 2800},
+              "ecg": {"EXG_ADS1292R_1_CH1_24BIT": 300_000, "EXG_ADS1292R_2_CH2_24BIT": -(2 ** 23)}}
+    stream([gsr, ecg], clock, 3.0, {}, values)                 # ECG checks need >= 2 s of data
+    a = export.analyze(rec.stop())
+    d = {x.meta["name"]: x.data for x in a.devices}
+    assert "GSR_Skin_Conductance_RAW" in d["gsr"] and "GSR_Skin_Conductance_CAL" not in d["gsr"]
+    assert d["gsr"]["GSR_Skin_Conductance_RAW"].iloc[0] == (1 << 14) | 1500       # exactly as sent
+    assert d["ecg"]["ECG_LL-RA_24BIT_RAW"].iloc[-1] == 300_000
+    assert "ECG_LL-LA_24BIT_CAL" not in d["ecg"]                                   # derived lead only when calibrated
+    # quality checks still see physical values
+    q = {(x.device, x.signal, x.check): x for x in a.qc}
+    assert q[("gsr", "GSR_Skin_Conductance_CAL", "Skin contact")].status == "OK"
+    assert q[("ecg", "ECG_Vx-RL_24BIT_CAL", "Saturation")].status == "FAIL"
+    path = export.write_zip(a)
+    with zipfile.ZipFile(path) as zf:
+        info = json.loads(zf.read("info.json"))
+        _, header, units, _ = read_member(zf, "ecg.csv")
+    assert info["values"] == "raw"
+    cal = {c["column"]: c for c in info["calibration"]}
+    assert cal["ecg_ECG_LL-RA_24BIT_RAW"]["parameters"] == {"formula": "exg", "gain": 4}
+    assert "2420" in cal["ecg_ECG_LL-RA_24BIT_RAW"]["formula"]
+    assert "Rf" in cal["gsr_GSR_Skin_Conductance_RAW"]["formula"]
+    assert units[header.index("ecg_ECG_LL-RA_24BIT_RAW")] == "no_units"

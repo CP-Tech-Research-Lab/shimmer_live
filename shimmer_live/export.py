@@ -6,7 +6,9 @@
                            <device>_Timestamp_Unix_CAL    ms    sample time, PC wall clock (UTC epoch)
                            <device>_Timestamp_Shared_CAL  s     sample time, shared clock (Unreal/QPC on Windows)
                            <device>_Timestamp_CAL         ms    sample time, Shimmer clock (from session start)
-                           <device>_<channel>_CAL ...           recorded channels
+                           <device>_<channel>_RAW ...           recorded channels: raw device values (default)
+                                                                or <channel>_CAL calibrated values; the
+                                                                formulas are in info.json ("calibration")
                            <device>_Keypoint                    keypoint name at the nearest sample
   <plugin> - <device>.csv  plugin outputs, same three timestamps
   keypoints.csv            every keypoint with its time on every clock
@@ -32,8 +34,8 @@ import pandas as pd
 
 from . import __version__, clocks, qc
 from .alignment import PeriodFits, split_periods
-from .conversions import battery_percent
-from .recorder import PARTIAL_SUFFIX
+from .conversions import CALIBRATION_DOC, battery_percent, calibrate_array
+from .recorder import PARTIAL_SUFFIX, VALUES_CAL, VALUES_RAW
 
 KEYPOINT_MAX_DISTANCE_MS = 1000.0
 
@@ -64,6 +66,7 @@ class Analysis:
     events: list = field(default_factory=list)
     qc: list = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    calibrated: dict = field(default_factory=dict)
 
     @property
     def recovered(self) -> bool:
@@ -106,6 +109,8 @@ def analyze(folder) -> Analysis:
     spc = session["clocks"]["shared_clock"]["seconds_per_cycle"]
     kp_events = [e for e in a.events if e["type"] == "keypoint"]
     fits = {}
+    raw_mode = session.get("values", VALUES_CAL) == VALUES_RAW      # older recordings were always calibrated
+    a.calibrated = {}                  # (mac, export column) -> calibrated array, for quality control
 
     last_ns = u0
     for dm in session["devices"]:
@@ -132,10 +137,20 @@ def analyze(folder) -> Analysis:
                 cols[c] = np.empty(0)
         units += ["ms", "s", "ms"]
         for ch in dm["channels"]:
-            cols[ch["export_name"]] = raw[ch["key"]].to_numpy() if len(raw) else np.empty(0)
-            units.append(ch["export_unit"])
+            data = raw[ch["key"]].to_numpy() if len(raw) else np.empty(0)
+            if raw_mode:
+                col = column_name(ch, raw_mode)
+                cols[col] = data
+                units.append("no_units")
+                cal = calibrate_array(ch.get("calibration"), data) if ch.get("calibration") else data
+            else:
+                col = ch["export_name"]
+                cols[col] = data
+                units.append(ch["export_unit"])
+                cal = data
+            a.calibrated[(dm["mac"], ch["export_name"])] = np.asarray(cal, dtype=float)
         names = {ch["export_name"] for ch in dm["channels"]}
-        if {"ECG_LL-RA_24BIT_CAL", "ECG_LA-RA_24BIT_CAL"} <= names:      # derived lead, as Consensys does
+        if not raw_mode and {"ECG_LL-RA_24BIT_CAL", "ECG_LA-RA_24BIT_CAL"} <= names:   # derived lead, as Consensys
             cols["ECG_LL-LA_24BIT_CAL"] = cols["ECG_LL-RA_24BIT_CAL"] - cols["ECG_LA-RA_24BIT_CAL"]
             units.append("mV")
         marks = np.full(len(unix_ms), "", dtype=object)
@@ -199,7 +214,7 @@ def analyze(folder) -> Analysis:
         a.qc += qc.check_completeness(name, len(d.data), expected, st["disconnects"], st["downtime_s"],
                                       st["longest_gap_s"])
         for ch in d.meta["channels"]:
-            x = d.data[ch["export_name"]].to_numpy(dtype=float)
+            x = a.calibrated[(d.meta["mac"], ch["export_name"])]
             if ch["kind"] == "exg":
                 a.qc += qc.check_ecg(name, ch["export_name"], x, rate, ch.get("full_scale"))
             elif ch["kind"] == "gsr":
@@ -211,6 +226,27 @@ def analyze(folder) -> Analysis:
             a.qc += qc.check_heart_rate(p.meta["device"], p.data["hr"].dropna().to_numpy(dtype=float))
     a.qc += qc.check_keypoints([e["name"] for e in kp_events])
     return a
+
+
+def column_name(ch: dict, raw_mode: bool) -> str:
+    """Consensys naming: <signal>_CAL for calibrated values, <signal>_RAW for raw device values."""
+    name = ch["export_name"]
+    if raw_mode and name.endswith("_CAL"):
+        return name[:-4] + "_RAW"
+    return name
+
+
+def calibration_info(a: "Analysis") -> list:
+    """Per recorded channel: how its raw value converts to physical units (written to info.json)."""
+    raw_mode = a.session.get("values", VALUES_CAL) == VALUES_RAW
+    out = []
+    for dm in a.session["devices"]:
+        for ch in dm["channels"]:
+            cal = ch.get("calibration") or {}
+            out.append({"device": dm["name"], "column": f"{dm['name']}_{column_name(ch, raw_mode)}",
+                        "calibrated_unit": ch["export_unit"], "parameters": cal,
+                        "formula": CALIBRATION_DOC.get(cal.get("formula"))})
+    return out
 
 
 def _stats_from_events(events, mac, stop_ns):
@@ -277,6 +313,8 @@ def write_zip(a: Analysis, name: str = "", notes: str = "", out_folder=None) -> 
             "app": "Shimmer Live", "app_version": __version__, "recording_name": name, "notes": notes,
             "recorded_with_app_version": a.session.get("app_version"),
             "summary": a.summary, "files": files + ["keypoints.csv", "qc.csv", "notes.txt"],
+            "values": a.session.get("values", VALUES_CAL),
+            "calibration": calibration_info(a),
             "timestamps": {
                 "Timestamp_Unix_CAL": "ms since 1970-01-01 UTC, PC wall clock, sample time (latency removed)",
                 "Timestamp_Shared_CAL": f"s, shared clock: {a.session['clocks']['shared_clock']['source']}",

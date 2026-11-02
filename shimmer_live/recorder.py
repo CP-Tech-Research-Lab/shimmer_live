@@ -2,8 +2,8 @@
 
 Working folder  <recordings>/.shimmer_<start time>.partial/
   session.json        devices, recorded channels, plugin outputs, keypoint definitions, clocks
-  device_<n>.csv      shimmer_ticks, host_unix_ns, shared_ticks, then one column per recorded channel
-                      (calibrated values; raw for channels without calibration)
+  device_<n>.csv      shimmer_ticks, host_unix_ns, shared_ticks, then one column per recorded channel:
+                      raw device values (default) or calibrated values, see VALUES_RAW/VALUES_CAL
   plugin_<n>.csv      shimmer_s, output, value     (one row per plugin output value)
   events.jsonl        keypoints, connection losses/reconnects, clock notes (flushed per line)
   stop.json           written at Stop (absent if the app closed while recording)
@@ -27,6 +27,7 @@ from .conversions import EXG_FULL_SCALE
 log = logging.getLogger("shimmerlive.recorder")
 
 PARTIAL_SUFFIX = ".partial"
+VALUES_RAW, VALUES_CAL = "raw", "calibrated"
 FLUSH_INTERVAL_NS = 500_000_000
 
 
@@ -60,8 +61,13 @@ def _full_scale(spec):
 
 
 class Recorder:
-    def __init__(self, folder, sessions, record_keys: dict, plugin_outputs: dict, keypoints: list):
-        """record_keys: {mac: set of channel keys}; plugin_outputs: {Binding: set of output keys}."""
+    def __init__(self, folder, sessions, record_keys: dict, plugin_outputs: dict, keypoints: list,
+                 values: str = VALUES_RAW):
+        """record_keys: {mac: set of channel keys}; plugin_outputs: {Binding: set of output keys};
+        values: VALUES_RAW (device values, default) or VALUES_CAL (physical units)."""
+        if values not in (VALUES_RAW, VALUES_CAL):
+            raise ValueError(f"values must be {VALUES_RAW!r} or {VALUES_CAL!r}")
+        self.values = values
         self.folder = Path(folder)
         self.start_unix_ns = clocks.unix_ns()
         self.start_shared_ticks = clocks.shared_clock_ticks()
@@ -88,7 +94,8 @@ class Recorder:
                 "sampling_rate_hz": s.rate, "link": s.link_desc,
                 "channels": [{"key": s.specs[i].key, "label": s.specs[i].label, "unit": s.specs[i].unit,
                               "export_name": s.specs[i].export_name, "export_unit": s.specs[i].export_unit,
-                              "kind": s.specs[i].kind, "full_scale": _full_scale(s.specs[i])} for i in idx],
+                              "kind": s.specs[i].kind, "full_scale": _full_scale(s.specs[i]),
+                              "calibration": s.specs[i].calibration} for i in idx],
             })
         plugins_meta = []
         self._pfiles = {}
@@ -107,7 +114,7 @@ class Recorder:
         self.keypoints = []
 
         _json_dump(self.dir / "session.json", {
-            "app_version": __version__, "base": self.base,
+            "app_version": __version__, "base": self.base, "values": self.values,
             "start_unix_ns": self.start_unix_ns, "start_shared_ticks": self.start_shared_ticks,
             "clocks": clocks.clock_report(), "devices": devices_meta, "plugins": plugins_meta,
             "keypoint_definitions": [{"name": k.name, "color": k.color} for k in keypoints],
@@ -127,8 +134,8 @@ class Recorder:
         log.info("recording to %s", self.dir)
 
     # ---------- called from session / plugin threads ----------
-    def put(self, session, host_unix_ns, shared_ticks, ticks, vals):
-        self._q.put((0, session.mac, ticks, host_unix_ns, shared_ticks, vals))
+    def put(self, session, host_unix_ns, shared_ticks, ticks, vals, raws):
+        self._q.put((0, session.mac, ticks, host_unix_ns, shared_ticks, raws if self.values == VALUES_RAW else vals))
 
     def put_plugin(self, binding, key, t_shimmer, value):
         entry = self._plugin.get(binding)

@@ -1,5 +1,6 @@
 """Dialogs: PIN entry, timestamp information, recording summary."""
 import datetime as dt
+import html
 import os
 import subprocess
 import sys
@@ -11,7 +12,9 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QHBoxLayo
                                QTableWidgetItem, QTextBrowser, QVBoxLayout)
 
 from .. import clocks, export
-from .common import CRITICAL, GOOD, MUTED, WARNING, fmt_duration, run_bg
+from ..conversions import CALIBRATION_DOC
+from .common import (CRITICAL, FONT_L, FONT_M, GOOD, MUTED, WARNING, fit_to_screen, fmt_duration, run_bg,
+                     set_role, style_table)
 
 
 class PinDialog(QDialog):
@@ -23,9 +26,10 @@ class PinDialog(QDialog):
         self.edit = QLineEdit()
         self.edit.setPlaceholderText("PIN")
         self.edit.setMaxLength(16)
+        self.edit.setStyleSheet(f"font-size: {FONT_L}pt; padding: 8px;")
         lay.addWidget(self.edit)
         hint = QLabel("Reminder: the PIN of Shimmer devices is <b>1234</b>.")
-        hint.setStyleSheet(f"color: {MUTED};")
+        hint.setStyleSheet(f"font-size: {FONT_M}pt;")
         lay.addWidget(hint)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
@@ -45,7 +49,7 @@ class TimingInfoDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Timestamps in recordings")
-        self.resize(720, 640)
+        fit_to_screen(self, 860, 760)
         rep = clocks.clock_report()
         lay = QVBoxLayout(self)
         live = QLabel()
@@ -108,6 +112,38 @@ clock is <code>clock_gettime(CLOCK_MONOTONIC)</code>.</p>
         lay.addWidget(bb)
 
 
+CALIBRATION_HTML = f"""
+<h3>Raw or calibrated values</h3>
+<p><b>Raw</b> (default): every channel is saved exactly as the Shimmer sent it (integers), with column names ending in
+<code>_RAW</code>. Nothing is lost or rounded; you can apply the formulas below, or different ones, later.</p>
+<p><b>Calibrated</b>: values are converted to physical units (mV, &micro;S) while recording, with column names ending
+in <code>_CAL</code>, like a Consensys "Calibrated" export.</p>
+<p>The live plots, the plugins and the quality checks always use calibrated values. Every recording's
+<code>info.json</code> lists, for each column, the formula and its parameters (e.g. the ECG gain).</p>
+<h3>Formulas</h3>
+<p><b>ECG / ExG</b><br>{html.escape(CALIBRATION_DOC['exg'])}</p>
+<p><b>GSR / EDA</b><br>{html.escape(CALIBRATION_DOC['gsr'])}</p>
+<p><b>Battery</b><br>{html.escape(CALIBRATION_DOC['vbatt'])}</p>
+<p><b>Other channels</b><br>{html.escape(CALIBRATION_DOC[None])}</p>
+<p>These are the nominal Shimmer3 conversions for these sensors (the same ones Consensys and pyshimmer use for ECG,
+GSR+ and battery).</p>
+"""
+
+
+class CalibrationDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("How values are calibrated")
+        fit_to_screen(self, 760, 640)
+        lay = QVBoxLayout(self)
+        tb = QTextBrowser()
+        tb.setHtml(CALIBRATION_HTML)
+        lay.addWidget(tb)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+
 def open_folder(path):
     if sys.platform == "win32":
         os.startfile(str(path))     # noqa: S606
@@ -130,7 +166,7 @@ class SaveRecordingDialog(QDialog):
         self.saved_path = None
         self._busy = True
         self.setWindowTitle("Recovered recording" if recovered else "Save recording")
-        self.resize(940, 720)
+        fit_to_screen(self, 1080, 860)
         lay = QVBoxLayout(self)
         self.status = QLabel("Analysing the recording: aligning timestamps and running quality checks…")
         self.status.setWordWrap(True)
@@ -139,43 +175,50 @@ class SaveRecordingDialog(QDialog):
             warn = QLabel("This recording was not saved because the app closed while recording. "
                           "Everything written up to that moment is recovered below.")
             warn.setWordWrap(True)
-            warn.setStyleSheet(f"color: {WARNING}; font-weight: 600;")
+            warn.setStyleSheet(f"color: {WARNING}; font-weight: 700; font-size: {FONT_M}pt;")
             lay.addWidget(warn)
         self.form = QFormLayout()
         lay.addLayout(self.form)
 
-        lay.addWidget(QLabel("<b>Devices</b>"))
+        lay.addWidget(set_role(QLabel("Devices"), "section"))
         cols = ["Device", "Rate", "Samples", "Expected", "Complete", "Disconnects", "Time lost", "Longest gap"]
         self.devices = QTableWidget(0, len(cols))
         self.devices.setHorizontalHeaderLabels(cols)
         self.devices.verticalHeader().setVisible(False)
         self.devices.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.devices.setMaximumHeight(130)
+        style_table(self.devices)
         lay.addWidget(self.devices)
 
-        lay.addWidget(QLabel("<b>Quality checks</b> <span style='color:%s'>(heuristics: they flag likely problems, "
-                             "they are not a clinical assessment)</span>" % MUTED))
+        qc_head = QHBoxLayout()
+        qc_head.addWidget(set_role(QLabel("Quality checks"), "section"))
+        qc_head.addWidget(set_role(QLabel("heuristics: they flag likely problems, they are not a clinical "
+                                          "assessment"), "muted"))
+        qc_head.addStretch(1)
+        lay.addLayout(qc_head)
         cols = ["Device", "Signal", "Check", "Result", "Value", "Details"]
         self.qc = QTableWidget(0, len(cols))
         self.qc.setHorizontalHeaderLabels(cols)
         self.qc.verticalHeader().setVisible(False)
         self.qc.setEditTriggers(QTableWidget.NoEditTriggers)
+        style_table(self.qc)
         self.qc.horizontalHeader().setStretchLastSection(True)
         lay.addWidget(self.qc, 1)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Name (optional):"))
+        row.addWidget(set_role(QLabel("Name"), "section"))
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("e.g. subject03_baseline — the start time is always part of the file name")
         row.addWidget(self.name_edit, 1)
         lay.addLayout(row)
-        lay.addWidget(QLabel("Notes (saved in the file):"))
+        lay.addWidget(set_role(QLabel("Notes (saved in the file)"), "section"))
         self.notes = QPlainTextEdit()
         self.notes.setPlaceholderText("Anything worth remembering about this session: participant state, "
                                       "electrode issues, interruptions…")
+        self.notes.setMinimumHeight(80)
         self.notes.setMaximumHeight(110)
         if recovered:
             self.notes.setPlainText("[recovered after the app closed while recording]\n")
+        self.status.setStyleSheet(f"font-size: {FONT_M}pt; font-weight: 700;")
         lay.addWidget(self.notes)
 
         btns = QHBoxLayout()
@@ -186,7 +229,7 @@ class SaveRecordingDialog(QDialog):
         self.btn_folder = QPushButton("Open folder")
         self.btn_folder.clicked.connect(lambda: open_folder(self.folder.parent))
         btns.addWidget(self.btn_folder)
-        self.btn_save = QPushButton("Save")
+        self.btn_save = set_role(QPushButton("Save recording"), "primary")
         self.btn_save.setDefault(True)
         self.btn_save.clicked.connect(self._save)
         btns.addWidget(self.btn_save)
@@ -203,7 +246,7 @@ class SaveRecordingDialog(QDialog):
         self._busy = False
         self.btn_discard.setEnabled(True)
         self.status.setText(f"✖ Could not analyse the recording: {e}\nThe raw working files are kept in {self.folder}.")
-        self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+        self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
 
     def _analysed(self, a):
         self.analysis = a
@@ -212,9 +255,12 @@ class SaveRecordingDialog(QDialog):
         self.form.addRow("Duration:", QLabel(f"<b>{fmt_duration(s['duration_s'])}</b> ({s['duration_s']:.1f} s)"))
         self.form.addRow("Started:", QLabel(f"{start:%Y-%m-%d %H:%M:%S} {start:%Z}  (UTC {s['start_utc']})"))
         self.form.addRow("Keypoints:", QLabel(", ".join(a.keypoints["Keypoint"]) if len(a.keypoints) else "none"))
+        values = a.session.get("values", "calibrated")
+        self.form.addRow("Values:", QLabel("raw device values (formulas to convert them are in info.json)"
+                                           if values == "raw" else "calibrated (mV, µS)"))
         if s.get("write_error"):
             err = QLabel(f"Write error during recording: {s['write_error']}")
-            err.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+            err.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
             self.form.addRow("Problem:", err)
         self.devices.setRowCount(len(a.devices))
         for r, d in enumerate(a.devices):
@@ -225,6 +271,8 @@ class SaveRecordingDialog(QDialog):
             for c, v in enumerate(vals):
                 self.devices.setItem(r, c, QTableWidgetItem(v))
         self.devices.resizeColumnsToContents()
+        h = self.devices.horizontalHeader().height() + self.devices.verticalHeader().length() + 6
+        self.devices.setFixedHeight(h)
         self.qc.setRowCount(len(a.qc))
         for r, q in enumerate(a.qc):
             for c, v in enumerate([q.device, q.signal, q.check, q.status, q.value, q.detail]):
@@ -242,7 +290,7 @@ class SaveRecordingDialog(QDialog):
                "WARNING": "▲ Some quality checks raised warnings — see below and consider noting them.",
                "FAIL": "✖ Some quality checks failed — see below."}[worst]
         self.status.setText(msg)
-        self.status.setStyleSheet(f"color: {QC_COLORS[worst]}; font-weight: 600;")
+        self.status.setStyleSheet(f"color: {QC_COLORS[worst]}; font-weight: 700; font-size: {FONT_M}pt;")
         self._enable(True)
 
     def _save(self):
@@ -262,7 +310,7 @@ class SaveRecordingDialog(QDialog):
         def failed(e):
             self._enable(True)
             self.status.setText(f"✖ Saving failed: {e}")
-            self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+            self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
 
         run_bg(lambda: export.write_zip(self.analysis, name, notes), done, failed, "save-recording")
 
