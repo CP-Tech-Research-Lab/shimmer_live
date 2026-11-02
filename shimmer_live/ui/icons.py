@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSize, Qt
-from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -32,10 +32,30 @@ def icon(name: str, color: str = "#1f1f1e", size: int = 18) -> QIcon:
     return ic
 
 
+LOGO_SVG = ASSETS / "cptech.svg"
+
+
+def _render_logo(px: int) -> QPixmap:
+    pm = QPixmap(QSize(px, px))
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    QSvgRenderer(str(LOGO_SVG)).render(p)
+    p.end()
+    return pm
+
+
 def logo_pixmap(height: int) -> QPixmap:
-    pm = QPixmap(str(ASSETS / "cptech.jpg"))
-    return pm.scaledToHeight(height, Qt.SmoothTransformation) if not pm.isNull() else pm
+    """The logo from its vector source, rendered at the screen's real pixel density (sharp on HiDPI)."""
+    screen = QGuiApplication.primaryScreen()
+    dpr = screen.devicePixelRatio() if screen else 1.0
+    pm = _render_logo(round(height * dpr))
+    pm.setDevicePixelRatio(dpr)
+    return pm
 
 
 def app_icon() -> QIcon:
-    return QIcon(str(ASSETS / "cptech.jpg"))
+    ic = QIcon()
+    for px in (16, 24, 32, 48, 64, 128, 256, 512):
+        ic.addPixmap(_render_logo(px))
+    return ic

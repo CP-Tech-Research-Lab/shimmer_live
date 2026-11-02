@@ -25,7 +25,7 @@ class PluginsPage(QWidget):
         b.clicked.connect(self.back.emit)
         bar.addWidget(b)
         logo = QLabel()
-        logo.setPixmap(logo_pixmap(46))
+        logo.setPixmap(logo_pixmap(80))
         bar.addWidget(logo)
         t = QLabel("Plugins")
         set_role(t, "title")
