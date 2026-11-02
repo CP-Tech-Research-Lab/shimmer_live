@@ -1,6 +1,6 @@
 # Shimmer Live
 
-Desktop app (Linux and Windows) to pair Shimmer3 sensors, view their data in real time and record it to CSV.
+Desktop app (Linux and Windows) to pair Shimmer3 sensors, view their data in real time, mark keypoints, run analysis plugins such as real-time HRV, and record everything to a single ZIP of Consensys-style CSV files with quality checks and notes.
 
 ## Run
 
@@ -11,69 +11,108 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
 
 ## Using it
 
-1. **Devices page.** It lists the paired devices. Tick the ones you want to use.
+1. **Start page (Devices).** It lists the paired devices. Tick the ones you want to use.
    - *Test connection* reads each device's firmware, sampling rate, sensors and battery.
    - *Forget* removes a pairing.
    - *⚙ Settings* connects to the device and shows its firmware, battery and configuration. From there you can change the sampling rate (with an estimate of the Bluetooth load), enabled sensors, ECG/ExG gains, GSR range and device name, and set the device clock to the PC's time. Changes are written to the Shimmer and read back to verify them.
    - *Scan for devices* finds new Shimmers. *Pair* pairs one, retrying up to 3 times. If the device asks for a PIN, a pop-up appears; the PIN is **1234**. After pairing, the device is tested automatically.
-   - The *Guide* tab explains how to connect a Shimmer, what the LEDs mean, and what to do when a device doesn't respond. The *Log* tab shows everything the app does.
-2. **Show live data.** Opens one plot per signal, coloured per device, with a 5–60 s window. Signals above 128 Hz are averaged down to about 128 Hz for display only; recordings keep every sample. Each device has a status card showing state, measured vs. nominal sampling rate, battery and sample count, and a ⚙ button with device info.
-3. **Alerts:**
+   - Tabs on the right:
+     - *Guide:* how to connect a Shimmer, what the LEDs mean, and what to do when a device doesn't respond.
+     - *Keypoints:* the 7 predefined keypoints (rest, experiment and task start/end, discard) plus your own, each with a colour.
+     - *Log:* everything the app does.
+   - *Plugins…* opens the plugin page (see below).
+2. **Show live data.** One plot per signal, coloured per device, with a 5–60 s window.
+   - Signals above 128 Hz are averaged to about 128 Hz for display only; recordings keep every sample.
+   - Each device has a status card: state, received vs. nominal sampling rate, battery, plugin status, and a ⚙ button with device info.
+   - The **Signals panel** (left) has two buttons per signal, plugin outputs included:
+     - **eye** shows or hides the signal in live view;
+     - **dot** selects whether it is recorded. Record choices lock once a recording starts.
+3. **Keypoints.** While recording, a button per keypoint (keys **1–9** for the first nine) marks the current moment. A line in the keypoint's colour appears on every plot, and the keypoint is saved with every Shimmer's data.
+4. **Plugins.** Plugins ticked on the Plugins page run on every device that has the signals they need. Their outputs are plotted and can be recorded like any other signal. Built in: **HRV**, real-time R-peak detection on ECG giving heart rate, RR interval and RMSSD over the last 30 s, with artifact beats excluded. To write your own, see [PLUGINS.md](PLUGINS.md).
+5. **Alerts:**
    - Red banner: lost connection. The app reconnects automatically.
    - Red banner with a *Retry* button: the device could not connect.
    - Amber or red banner: low battery (below 20% / below 10%).
    - Amber banner: packet rate below 85% (weak link).
    - Amber banner: an ECG channel at full scale (lead off).
    - Amber banner: GSR with no skin contact.
+   - Amber banner: a plugin error.
    - Amber banner: low disk space.
    - While recording, a large flashing red panel shows *"LOST CONNECTION — device — hh:mm:ss and counting"*.
-4. **Recording.** *Start recording* writes all channels of the connected devices to one CSV. *Stop recording* shows a summary: duration, samples received vs. expected, disconnections, time lost, longest gap. You can give the recording a name there.
-   - Files go to `~/Documents/ShimmerRecordings`; change this with the *Folder…* button.
-   - File name: `[name_]shimmer_YYYY-MM-DD_HH-MM-SS.mmm_UTC+hhmm.csv`. It always includes the exact start time.
-   - Alongside it, a `.meta.json` file holds the device configuration, clock sources, connection events and the summary.
-   - *ⓘ Timestamps* shows which system clock functions are used on the current machine, and how to synchronise other systems with the recording.
+6. **Recording.**
+   - *Stop recording* opens the save dialog. It shows a summary per device (samples received vs. expected, connection losses, time lost) and the **quality checks**, and has a **name** field and a **notes** box. *Save* writes the ZIP.
+   - Closing the dialog never loses the recording. *Discard* deletes it after confirmation.
+   - While recording, data goes to crash-safe working files. If the app closes during a recording, it offers to recover it at the next start.
+   - Recordings go to `~/Documents/ShimmerRecordings`; change this with *Folder…*.
+   - *ⓘ Timestamps* shows which system clock functions are used on this machine, and how other systems can sync with the recording.
 
-## CSV columns
+## Recording format
 
-| column | meaning |
+`[name_]shimmer_YYYY-MM-DD_HH-MM-SS.mmm_UTC+hhmm.zip`. The file name always includes the exact start time.
+
+| file | content |
 |---|---|
-| `device`, `mac` | which Shimmer the row comes from (one row per sample, all devices in one file) |
-| `host_unix_ns`, `host_utc_iso` | system wall clock (UTC) when the packet was received: `time.time_ns()` |
-| `shared_clock_ticks`, `shared_clock_s` | monotonic shared clock at reception, for syncing with other software on the same PC. On Windows: `QueryPerformanceCounter`, with seconds computed exactly like Unreal Engine's `FPlatformTime::Cycles64() * FPlatformTime::GetSecondsPerCycle64()`. On Linux: `clock_gettime(CLOCK_MONOTONIC)` in ns. |
-| `shimmer_ts_raw` | the Shimmer's own 24-bit timestamp (32768 ticks/s, wraps every 512 s) |
-| `shimmer_ticks`, `shimmer_time_s` | that timestamp unwrapped into a continuous count, and the same count in seconds |
-| `<CH>_raw`, `<CH>_<unit>` | raw value and calibrated value: GSR in µS, ECG in mV (using the gain read from the device), battery in mV |
+| `<device>.csv` | one per Shimmer, in the Consensys "Calibrated" layout: a `"sep=,"` line, a row of column names, a row of units, then data |
+| `<plugin> - <device>.csv` | plugin outputs, e.g. `HRV - Shimmer3-8395.csv` with heart rate, RR and RMSSD per beat |
+| `keypoints.csv` | every keypoint with its time on every clock, including each Shimmer's own clock |
+| `qc.csv` | the quality checks shown at save time |
+| `info.json` | notes, app version, devices, plugins, connection losses/reconnects, clock sources |
+| `notes.txt` | the notes, as plain text |
+
+Every device and plugin file starts with three timestamps:
+
+| column | unit | meaning |
+|---|---|---|
+| `<device>_Timestamp_Unix_CAL` | ms | sample time on the PC wall clock (UTC epoch), the same convention as Consensys |
+| `<device>_Timestamp_Shared_CAL` | s | sample time on the shared clock. On Windows this is `QueryPerformanceCounter`, computed exactly like Unreal Engine's `FPlatformTime::Cycles64() * FPlatformTime::GetSecondsPerCycle64()`; on Linux, `CLOCK_MONOTONIC` |
+| `<device>_Timestamp_CAL` | ms | Shimmer clock (32768 Hz crystal), 0 = first sample of the live session |
+
+The two PC timestamps are *sampling* times, not packet arrival times. Bluetooth delays packets by tens to hundreds of milliseconds. For each connection period, the Shimmer clock is fitted to the PC clock along the lower edge of the arrival times (the lower convex hull); this removes the latency and corrects clock drift. In tests with simulated latency, this recovers sampling times to within about 1 ms.
+
+The channels follow Consensys naming (`ECG_LL-RA_24BIT_CAL`, `ECG_LA-RA_24BIT_CAL`, `ECG_RESP_24BIT_CAL`, `ECG_Vx-RL_24BIT_CAL`, the derived `ECG_LL-LA_24BIT_CAL`, `GSR_Skin_Conductance_CAL`, `Battery_CAL`, …), followed by `<device>_Keypoint`, which holds the keypoint name at the nearest sample.
+
+The **quality checks** are heuristics with thresholds listed in `shimmer_live/qc.py`. They flag likely problems; they are not a clinical assessment:
+- completeness and connection losses;
+- ECG: saturation (lead off), flat signal, amplitude, 50/60 Hz mains interference;
+- EDA: skin contact, implausible range, abrupt-change artifacts, flat signal;
+- heart rate range (with the HRV plugin), battery, and unmatched start/end keypoints.
 
 ## Analysing recordings
 
-[`examples/load_recording.py`](examples/load_recording.py) loads a recording with pandas, splits it per device and estimates when each sample was actually taken in PC time. Received-packet times jitter by tens of milliseconds over Bluetooth, while the Shimmer's own clock spaces samples exactly. Per connection period, the script fits the Shimmer clock to the PC clock (correcting drift) along the lower edge of the arrival times.
+[`examples/load_recording.py`](examples/load_recording.py) loads a recording ZIP with pandas:
 
 ```
-python examples/load_recording.py recording.csv            # summary: samples, gaps, Bluetooth latency
-python examples/load_recording.py recording.csv --plot     # plot every channel
-python examples/load_recording.py recording.csv --save     # one aligned CSV per device
+python examples/load_recording.py recording.zip             # summary, notes, keypoints, QC problems
+python examples/load_recording.py recording.zip --plot      # every channel, with keypoint lines
+python examples/load_recording.py recording.zip --extract   # unzip next to the file
 ```
 
-In your own code, `load_recording("recording.csv")` returns `{device: DataFrame}` with added columns `sample_unix_s`, `sample_shared_s`, `period` and `latency_ms`. The script only needs pandas and numpy, so it can be copied on its own.
+In your own code, `load_recording("recording.zip")` returns the devices and plugin outputs as DataFrames, plus the keypoints, QC, info and notes. It only needs pandas, so it can be copied on its own.
 
 ## Layout
 
 ```
 shimmer_live/
-  session.py      connect / stream / watchdog / auto-reconnect for one device
-  transport.py    Bluetooth links (Linux RFCOMM socket, Windows COM port or socket)
-  recorder.py     CSV writer and recording statistics
-  clocks.py       system timestamps and clock description
-  conversions.py  raw values to physical units
+  session.py        connect / stream / watchdog / auto-reconnect for one device
+  transport.py      Bluetooth links (Linux RFCOMM socket, Windows COM port or socket)
+  recorder.py       crash-safe working files while recording
+  export.py         working files -> final ZIP (aligned timestamps, keypoints, QC, notes)
+  alignment.py      Shimmer clock -> PC clock (lower convex hull per connection period)
+  qc.py             quality checks
+  keypoints.py      keypoint definitions
+  plugins/          plugin interface (api.py), loader, host, built-in plugins (HRV)
+  clocks.py         system timestamps and the shared clock
+  conversions.py    raw values to physical units, Consensys channel names
   device_config.py  read / change on-device settings
-  bt/             pairing and discovery: bluez.py (Linux, D-Bus), windows.py (WinRT)
-  ui/             Qt pages and dialogs
+  bt/               pairing and discovery: bluez.py (Linux, D-Bus), windows.py (WinRT)
+  ui/               Qt pages and dialogs
+examples/           recording loader, example plugin
 ```
 
 ## Platform notes
 
-- **Linux:** no root needed. The app opens RFCOMM sockets directly; `rfcomm bind` is not needed. The RFCOMM channel is looked up through SDP (`sdptool`). If that fails, the app tries channels in turn, and caches the result. Settings and logs are stored in `~/.config/shimmer_live/`.
-- **Windows:** streaming goes through the outgoing Bluetooth COM port that Windows creates when you pair a Shimmer. Settings and logs are stored in `%APPDATA%\ShimmerLive\`. **The Windows code paths (pairing, COM port, shared clock) have not been run on a Windows machine yet.** The rest of the app (UI, sessions, recording) is shared code and has been tested on Linux.
+- **Linux:** no root needed. The app opens RFCOMM sockets directly; `rfcomm bind` is not needed. The RFCOMM channel is looked up through SDP (`sdptool`). If that fails, the app tries channels in turn, and caches the result. Settings, logs and user plugins are stored in `~/.config/shimmer_live/`.
+- **Windows:** streaming goes through the outgoing Bluetooth COM port that Windows creates when you pair a Shimmer. Settings, logs and user plugins are stored in `%APPDATA%\ShimmerLive\`. **The Windows code paths (pairing, COM port, shared clock) have not been run on a Windows machine yet.** The rest of the app is shared code and has been tested on Linux.
 
 ## Tests
 
@@ -82,7 +121,16 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-The tests cover the data path without Bluetooth: unit conversions, timestamp unwrapping across 24-bit wraps and reconnects, the CSV format and recording statistics, plot decimation, ECG register edits and the shared clock. They also import every module and build the UI pages off-screen.
+The tests run without Bluetooth. They cover:
+- unit conversions;
+- timestamp unwrapping across 24-bit wraps and reconnects;
+- the recording pipeline end to end: timestamp alignment against known sampling times with simulated Bluetooth latency, keypoints, selected channels, the ZIP layout, notes and crash recovery;
+- the quality checks;
+- the HRV plugin against synthetic ECG with known beat times;
+- plugin loading and isolation of plugin errors;
+- plot decimation, ECG register edits and the shared clock.
+
+They also import every module and build the UI pages off-screen.
 
 GitHub Actions runs them on Linux and Windows (Python 3.11 and 3.14) on every push. The Windows job also runs the Windows shared-clock code and checks every WinRT call the Windows backend uses.
 
