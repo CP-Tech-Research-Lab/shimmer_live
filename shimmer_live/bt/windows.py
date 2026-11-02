@@ -30,18 +30,8 @@ def _mac_from_int(a: int) -> str:
 
 
 async def _find_all(selector):
-    fn = getattr(DeviceInformation, "find_all_async_aqs_filter", None)
-    if fn is not None:
-        return await fn(selector)
-    return await DeviceInformation.find_all_async(selector)
-
-
-def _accept_with_pin(args, pin):
-    fn = getattr(args, "accept_with_pin", None)
-    if fn is not None:
-        fn(pin)
-    else:
-        args.accept(pin)
+    # pywinrt 4.x has no single-string overload: FindAllAsync(aqsFilter, additionalProperties).
+    return await DeviceInformation.find_all_async(selector, None)
 
 
 PAIR_STATUS_TEXT = {
@@ -130,7 +120,7 @@ class WindowsBackend(BluetoothBackend):
                 try:
                     pin = pin_provider(device.name)
                     if pin:
-                        _accept_with_pin(args, pin)
+                        args.accept(pin)
                 finally:
                     deferral.complete()
             else:
