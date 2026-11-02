@@ -44,6 +44,18 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
 | `shimmer_ticks`, `shimmer_time_s` | that timestamp unwrapped into a continuous count, and the same count in seconds |
 | `<CH>_raw`, `<CH>_<unit>` | raw value and calibrated value: GSR in µS, ECG in mV (using the gain read from the device), battery in mV |
 
+## Analysing recordings
+
+[`examples/load_recording.py`](examples/load_recording.py) loads a recording with pandas, splits it per device and estimates when each sample was actually taken in PC time. Received-packet times jitter by tens of milliseconds over Bluetooth, while the Shimmer's own clock spaces samples exactly. Per connection period, the script fits the Shimmer clock to the PC clock (correcting drift) along the lower edge of the arrival times.
+
+```
+python examples/load_recording.py recording.csv            # summary: samples, gaps, Bluetooth latency
+python examples/load_recording.py recording.csv --plot     # plot every channel
+python examples/load_recording.py recording.csv --save     # one aligned CSV per device
+```
+
+In your own code, `load_recording("recording.csv")` returns `{device: DataFrame}` with added columns `sample_unix_s`, `sample_shared_s`, `period` and `latency_ms`. The script only needs pandas and numpy, so it can be copied on its own.
+
 ## Layout
 
 ```
