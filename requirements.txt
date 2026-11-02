@@ -1,7 +1,7 @@
 # Shimmer Live - Python 3.11+ (winrt 4.x needs 3.11 on Windows)
 pyshimmer>=1.0
 pyserial>=3.5
-numpy>=1.24
+numpy>=2.0
 PySide6>=6.5
 pyqtgraph>=0.13
 
@@ -15,3 +15,6 @@ winrt-Windows.Devices.Enumeration>=4.0; sys_platform == "win32"
 winrt-Windows.Devices.Radios>=4.0; sys_platform == "win32"
 winrt-Windows.Foundation>=4.0; sys_platform == "win32"
 winrt-Windows.Foundation.Collections>=4.0; sys_platform == "win32"
+
+# Real-time plugins (HRV) and quality checks
+scipy>=1.10
