@@ -2,15 +2,15 @@
 from dataclasses import replace
 
 from PySide6.QtCore import QRegularExpression, Qt
-from PySide6.QtGui import QRegularExpressionValidator
+from PySide6.QtGui import QDoubleValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
 
-from ..device_config import (BASE_SENSORS, BT_LIMIT_BYTES_S, BT_WARN_BYTES_S, CONFLICTS, EXPANSION_SENSORS,
-                             GSR_RANGES, NAME_MAX_LEN, RATE_PRESETS, DeviceConfigurator, bluetooth_load,
-                             packet_bytes, with_exg_changes)
-from .common import CRITICAL, GOOD, MUTED, WARNING, run_bg, ui_call
+from ..device_config import (BASE_SENSORS, BT_LIMIT_BYTES_S, BT_WARN_BYTES_S, CONFLICTS, DEVICE_CLOCK_HZ,
+                             EXPANSION_SENSORS, GSR_RANGES, NAME_MAX_LEN, RATE_MAX_HZ, RATE_MIN_HZ, RATE_PRESETS,
+                             DeviceConfigurator, achievable_rate, bluetooth_load, packet_bytes, with_exg_changes)
+from .common import CRITICAL, FONT_M, GOOD, MUTED, WARNING, fit_to_screen, run_bg, set_role, ui_call
 
 EXG_LABELS = {(0, 0): "Chip 1 CH1 (ECG LL-RA)", (0, 1): "Chip 1 CH2 (ECG LA-RA)",
               (1, 0): "Chip 2 CH1 (ExG2 CH1)", (1, 1): "Chip 2 CH2 (ECG Vx-RL)"}
@@ -27,7 +27,7 @@ class DeviceSettingsDialog(QDialog):
     def __init__(self, parent, mac, name, cfg, configurator=None):
         super().__init__(parent)
         self.setWindowTitle(f"{name} — device settings")
-        self.resize(640, 760)
+        fit_to_screen(self, 760, 900)
         self.name = name
         self.conf = configurator or DeviceConfigurator(mac, cfg)
         self.info = None
@@ -50,7 +50,7 @@ class DeviceSettingsDialog(QDialog):
         self.btn_clock.clicked.connect(self._set_clock)
         row.addWidget(self.btn_clock)
         row.addStretch(1)
-        self.btn_apply = QPushButton("Apply changes")
+        self.btn_apply = set_role(QPushButton("Apply changes"), "primary")
         self.btn_apply.clicked.connect(self._apply)
         self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.accept)
@@ -81,7 +81,7 @@ class DeviceSettingsDialog(QDialog):
         self._set_busy(False)
         self.status.setText(f"✖ {self.name}: {e}\n\nCheck it is switched on (blue LED blinking), close by and "
                             f"not connected to another program, then open the settings again.")
-        self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+        self.status.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
 
     def _loaded(self, info):
         if self._closed:                 # dialog closed while connecting: release the link now
@@ -91,7 +91,7 @@ class DeviceSettingsDialog(QDialog):
         self._set_busy(False)
         self.status.setText(f"✔ Connected to {self.name}. Change what you need and press Apply. "
                             f"Changes are stored on the Shimmer.")
-        self.status.setStyleSheet(f"color: {GOOD}; font-weight: 600;")
+        self.status.setStyleSheet(f"color: {GOOD}; font-weight: 700; font-size: {FONT_M}pt;")
         self._build(info)
         self.scroll.setVisible(True)
 
@@ -123,15 +123,28 @@ class DeviceSettingsDialog(QDialog):
         for r in rates:
             self.rate_combo.addItem(_fmt_rate(r) + ("  (current)" if r == s.sampling_rate else ""), r)
         self.rate_combo.setCurrentIndex(rates.index(s.sampling_rate))
-        self.rate_combo.currentIndexChanged.connect(self._update_load)
-        f.addRow("Sampling rate:", self.rate_combo)
+        self.rate_combo.currentIndexChanged.connect(self._preset_chosen)
+        self.rate_custom = QLineEdit()
+        self.rate_custom.setPlaceholderText("custom, e.g. 300")
+        self.rate_custom.setValidator(QDoubleValidator(RATE_MIN_HZ, RATE_MAX_HZ, 3))
+        self.rate_custom.setMaximumWidth(170)
+        self.rate_custom.textChanged.connect(self._update_load)
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(self.rate_combo, 1)
+        rate_row.addWidget(QLabel("or"))
+        rate_row.addWidget(self.rate_custom)
+        rate_row.addWidget(QLabel("Hz"))
+        f.addRow("Sampling rate:", rate_row)
+        self.rate_actual = QLabel()
+        self.rate_actual.setWordWrap(True)
+        f.addRow("Device will use:", self.rate_actual)
         self.load_label = QLabel()
         self.load_label.setWordWrap(True)
         f.addRow("Bluetooth load:", self.load_label)
         hint = QLabel("Recordings always store every sample at this rate. ECG/ExG chips are set to a matching "
                       "internal data rate automatically.")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {MUTED};")
+        set_role(hint, "muted")
         f.addRow(hint)
         v.addWidget(g)
 
@@ -150,7 +163,7 @@ class DeviceSettingsDialog(QDialog):
         warn = QLabel("Enable only sensors your Shimmer's expansion board actually has — the others stream "
                       "meaningless numbers.")
         warn.setWordWrap(True)
-        warn.setStyleSheet(f"color: {WARNING};")
+        warn.setStyleSheet(f"color: {WARNING}; font-weight: 600;")
         gv.addWidget(warn)
         grid = QGridLayout()
         for i, (sensor, label) in enumerate(EXPANSION_SENSORS):
@@ -178,7 +191,7 @@ class DeviceSettingsDialog(QDialog):
             note = QLabel("Higher gain = finer resolution but smaller input range (saturates sooner). "
                           "Shimmer's default for ECG is × 4.")
             note.setWordWrap(True)
-            note.setStyleSheet(f"color: {MUTED};")
+            set_role(note, "muted")
             f.addRow(note)
             v.addWidget(g)
 
@@ -208,8 +221,29 @@ class DeviceSettingsDialog(QDialog):
     def _selected_sensors(self):
         return frozenset(s for s, cb in self.sensor_boxes.items() if cb.isChecked())
 
+    def _preset_chosen(self, *_):
+        self.rate_custom.blockSignals(True)
+        self.rate_custom.clear()                       # a preset replaces any custom value
+        self.rate_custom.blockSignals(False)
+        self._update_load()
+
+    def _chosen_rate(self) -> float:
+        """Rate the device will actually use: a custom value (if valid) or the preset."""
+        text = self.rate_custom.text().strip().replace(",", ".")
+        try:
+            requested = float(text)
+        except ValueError:
+            requested = None
+        if requested is not None and RATE_MIN_HZ <= requested <= RATE_MAX_HZ:
+            return achievable_rate(requested)[1]
+        return self.rate_combo.currentData()
+
     def _update_load(self, *_):
-        rate = self.rate_combo.currentData()
+        rate = self._chosen_rate()
+        divider = round(DEVICE_CLOCK_HZ / rate)
+        self.rate_actual.setText(f"<b>{rate:.6g} Hz</b>  ({DEVICE_CLOCK_HZ} Hz clock ÷ {divider}). Any rate from "
+                                 f"{RATE_MIN_HZ:g} to {RATE_MAX_HZ:g} Hz can be typed; it is rounded to the nearest "
+                                 f"rate the clock can produce.")
         sensors = self._selected_sensors()
         load = bluetooth_load(sensors, rate)
         text = f"≈ {load / 1000:.1f} kB/s ({packet_bytes(sensors)} bytes × {rate:g} packets/s)"
@@ -226,7 +260,7 @@ class DeviceSettingsDialog(QDialog):
 
     def _wanted(self):
         old = self.info.settings
-        rate = self.rate_combo.currentData()
+        rate = self._chosen_rate()
         regs = {}
         for chip, r in old.exg_regs.items():
             gains = {ch: self.gain_combos[(chip, ch)].currentData() for ch in (0, 1)}
@@ -287,7 +321,7 @@ class DeviceSettingsDialog(QDialog):
             self._loaded(info)
             if problems:
                 self.status.setText("▲ Written, but the device reports different values for: " + ", ".join(problems))
-                self.status.setStyleSheet(f"color: {WARNING}; font-weight: 600;")
+                self.status.setStyleSheet(f"color: {WARNING}; font-weight: 700; font-size: {FONT_M}pt;")
             else:
                 self.status.setText("✔ Settings written and verified on the Shimmer.")
 
@@ -299,7 +333,7 @@ class DeviceSettingsDialog(QDialog):
         def done(_):
             self._set_busy(False)
             self.status.setText("✔ Device clock set to this PC's time.")
-            self.status.setStyleSheet(f"color: {GOOD}; font-weight: 600;")
+            self.status.setStyleSheet(f"color: {GOOD}; font-weight: 700; font-size: {FONT_M}pt;")
 
         run_bg(self.conf.set_clock_to_pc, done, self._failed, "settings-clock")
 
@@ -338,7 +372,7 @@ class DeviceInfoDialog(QDialog):
         note = QLabel("To change sampling rate, sensors, gains or name: go back to Devices and use the ⚙ button "
                       "(settings can only be changed while the device is not streaming).")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color: {MUTED};")
+        set_role(note, "muted")
         lay.addWidget(note)
         bb = QDialogButtonBox(QDialogButtonBox.Close)
         bb.rejected.connect(self.reject)

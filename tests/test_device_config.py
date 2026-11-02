@@ -2,7 +2,7 @@ from pyshimmer import EChannelType as E
 from pyshimmer.dev.channels import ESensorGroup as S
 from pyshimmer.dev.exg import ExGRegister
 
-from shimmer_live.device_config import bluetooth_load, enabled_sensors, exg_rate_code, packet_bytes, with_exg_changes
+from shimmer_live.device_config import achievable_rate, bluetooth_load, enabled_sensors, exg_rate_code, packet_bytes, with_exg_changes
 
 from .conftest import ECG_CHANNELS, GSR_CHANNELS
 
@@ -44,3 +44,12 @@ def test_exg_register_edit_touches_only_rate_and_gain_bits():
 def test_exg_register_untouched_without_changes():
     assert with_exg_changes(ECG_REGS) == ECG_REGS
     assert with_exg_changes(ECG_REGS, gains={0: 4, 1: 4}) == ECG_REGS
+
+
+def test_custom_rates_round_like_the_device():
+    from pyshimmer.dev.base import dr2sr, sr2dr
+    for requested in (1.0, 10.0, 32.0, 100.0, 256.0, 300.0, 333.3, 512.0, 1000.0, 2048.0):
+        divider, actual = achievable_rate(requested)
+        assert divider == sr2dr(requested) and actual == dr2sr(divider)       # same rounding as pyshimmer
+    assert achievable_rate(300.0) == (109, 32768 / 109)
+    assert achievable_rate(256.0) == (128, 256.0)

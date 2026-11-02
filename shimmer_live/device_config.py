@@ -19,8 +19,17 @@ from .transport import open_link, quiesce
 
 log = logging.getLogger("shimmerlive.config")
 
-# Sampling rates the Shimmer can produce exactly (32768 Hz clock / integer divider).
+# The Shimmer samples at its 32768 Hz clock divided by a whole number, so any requested rate is
+# rounded to 32768 / round(32768 / rate). The presets below are exact (power-of-two dividers etc.).
+DEVICE_CLOCK_HZ = 32768
 RATE_PRESETS = [1024.0, 512.0, 256.0, 204.8, 128.0, 102.4, 51.2, 32.0, 10.24]
+RATE_MIN_HZ, RATE_MAX_HZ = 1.0, 2048.0
+
+
+def achievable_rate(requested_hz: float) -> tuple[int, float]:
+    """(divider, actual rate in Hz) the device will use for a requested rate (same rounding as pyshimmer)."""
+    divider = max(1, min(65535, round(DEVICE_CLOCK_HZ / requested_hz)))
+    return divider, DEVICE_CLOCK_HZ / divider
 
 GAIN_CODES = {gain: code for code, gain in ExGRegister.GAIN_MAP.items()}           # gain -> bits 6:4
 ADS_RATES = sorted((sps, code) for code, sps in ExGRegister.DATA_RATE_MAP.items() if sps > 0)
