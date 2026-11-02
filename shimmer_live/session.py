@@ -205,13 +205,7 @@ class ShimmerSession:
                     if any(c.name.startswith(f"EXG_ADS1292R_{chip + 1}") for c in chans):
                         reg = timed(dev.get_exg_register, 5.0, chip)
                         gains[(chip, 0)], gains[(chip, 1)] = reg.ch1_gain, reg.ch2_gain
-                self.specs = build_specs(chans, gains)
-                self.plot_specs = [s for s in self.specs if s.plot]
-                self.rate = rate
-                self.kind = device_kind(chans)
-                self.battery_from_stream = EChannelType.VBATT in chans
-                self.plot_decim = max(1, round(rate / PLOT_RATE_HZ))
-                self.ring = Ring(len(self.plot_specs), int(rate / self.plot_decim * BUFFER_SECONDS) + 64)
+                self.configure(rate, chans, gains)
                 try:
                     self.battery_pct = timed(dev.get_battery_state, 5.0, True)
                 except Exception as e:
@@ -233,6 +227,16 @@ class ShimmerSession:
                 link.close()
             raise
         self._dev, self._link = dev, link
+
+    def configure(self, rate, chans, exg_gains):
+        """Set up channel decoding and the plot buffer for the device's stream layout."""
+        self.specs = build_specs(chans, exg_gains)
+        self.plot_specs = [s for s in self.specs if s.plot]
+        self.rate = rate
+        self.kind = device_kind(chans)
+        self.battery_from_stream = EChannelType.VBATT in chans
+        self.plot_decim = max(1, round(rate / PLOT_RATE_HZ))
+        self.ring = Ring(len(self.plot_specs), int(rate / self.plot_decim * BUFFER_SECONDS) + 64)
 
     def _teardown(self):
         dev, link = self._dev, self._link

@@ -7,3 +7,4 @@ dist/
 # recordings, if saved inside the repo
 *.csv
 *.meta.json
+.pytest_cache/
