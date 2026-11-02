@@ -5,7 +5,7 @@ Desktop app (Linux and Windows) to pair Shimmer3 sensors, view their data in rea
 ## Run
 
 - **Linux:** `./run_linux.sh`
-- **Windows:** double-click `run_windows.bat`. It needs Python 3.10+ from python.org, with "Add to PATH" or the `py` launcher.
+- **Windows:** double-click `run_windows.bat`. It needs Python 3.11+ from python.org, with "Add to PATH" or the `py` launcher.
 
 The first run creates `.venv` and installs `requirements.txt`. After that you can also start the app with `python -m shimmer_live` from inside the venv.
 
@@ -71,6 +71,8 @@ python -m pytest
 ```
 
 The tests cover the data path without Bluetooth: unit conversions, timestamp unwrapping across 24-bit wraps and reconnects, the CSV format and recording statistics, plot decimation, ECG register edits and the shared clock. They also import every module and build the UI pages off-screen.
+
+GitHub Actions runs them on Linux and Windows (Python 3.11 and 3.14) on every push. The Windows job also runs the Windows shared-clock code and checks every WinRT call the Windows backend uses.
 
 ## License
 

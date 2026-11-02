@@ -1,4 +1,4 @@
-# Shimmer Live - Python 3.10+ (tested with 3.14 on Linux)
+# Shimmer Live - Python 3.11+ (winrt 4.x needs 3.11 on Windows)
 pyshimmer>=1.0
 pyserial>=3.5
 numpy>=1.24
