@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget
 from .. import export
 from ..bt import BackendUnavailable, get_backend
 from .devices_page import DevicesPage
+from .common import fit_to_screen
 from .dialogs import SaveRecordingDialog
 from .icons import app_icon
 from .live_page import LivePage
@@ -21,7 +22,7 @@ class MainWindow(QMainWindow):
         self.cfg = cfg
         self.setWindowTitle("Shimmer Live")
         self.setWindowIcon(app_icon())
-        self.resize(1320, 880)
+        fit_to_screen(self, 1480, 940)
         try:
             backend, err = get_backend(), None
         except BackendUnavailable as e:

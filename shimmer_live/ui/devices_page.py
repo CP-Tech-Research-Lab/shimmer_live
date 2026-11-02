@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QGroupBox, QHBoxLayout, QHeaderView, Q
 
 from ..bt import BtDevice, PairingError
 from ..session import probe_device
-from .common import CRITICAL, GOOD, MUTED, WARNING, Banner, run_bg, set_role, ui_call
+from .common import CRITICAL, FONT_M, GOOD, MUTED, WARNING, Banner, run_bg, set_role, style_table, ui_call
 from .device_settings import DeviceSettingsDialog
 from .dialogs import PinDialog
 from .guide import GUIDE_HTML
@@ -78,10 +78,10 @@ class DevicesPage(QWidget):
         lv = QVBoxLayout(left)
         head = QHBoxLayout()
         logo = QLabel()
-        logo.setPixmap(logo_pixmap(40))
+        logo.setPixmap(logo_pixmap(46))
         head.addWidget(logo)
         title = QLabel("Devices")
-        title.setStyleSheet("font-size: 16pt; font-weight: 700;")
+        set_role(title, "title")
         head.addWidget(title)
         head.addStretch(1)
         self.btn_plugins = QPushButton("Plugins…")
@@ -92,7 +92,7 @@ class DevicesPage(QWidget):
 
         self.adapter_row = QHBoxLayout()
         self.adapter_label = QLabel("checking Bluetooth…")
-        self.adapter_label.setStyleSheet(f"color: {MUTED};")
+        set_role(self.adapter_label, "muted")
         self.btn_power = QPushButton("Turn Bluetooth on")
         self.btn_power.setVisible(False)
         self.btn_power.clicked.connect(self._power_on)
@@ -114,6 +114,7 @@ class DevicesPage(QWidget):
         self.tbl_paired = QTableWidget(0, 5)
         self.tbl_paired.setHorizontalHeaderLabels(["Use", "Name", "Address", "Status / last test", ""])
         self.tbl_paired.verticalHeader().setVisible(False)
+        style_table(self.tbl_paired, 42)
         self.tbl_paired.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl_paired.setEditTriggers(QTableWidget.NoEditTriggers)
         hh = self.tbl_paired.horizontalHeader()
@@ -148,7 +149,7 @@ class DevicesPage(QWidget):
         hint = QLabel("Switch the Shimmer on (blue LED blinking briefly every 2 s), keep it within 1–2 m, then scan. "
                       "See the Guide tab if it does not show up.")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {MUTED};")
+        set_role(hint, "muted")
         g2v.addWidget(hint)
         r2 = QHBoxLayout()
         self.btn_scan = QPushButton(f"Scan for devices ({SCAN_SECONDS} s)")
@@ -158,7 +159,7 @@ class DevicesPage(QWidget):
         self.scan_progress.setMaximumWidth(160)
         self.scan_progress.setVisible(False)
         self.scan_label = QLabel("")
-        self.scan_label.setStyleSheet(f"color: {MUTED};")
+        set_role(self.scan_label, "muted")
         r2.addWidget(self.btn_scan)
         r2.addWidget(self.scan_progress)
         r2.addWidget(self.scan_label, 1)
@@ -166,6 +167,7 @@ class DevicesPage(QWidget):
         self.tbl_found = QTableWidget(0, 4)
         self.tbl_found.setHorizontalHeaderLabels(["Name", "Address", "Signal", ""])
         self.tbl_found.verticalHeader().setVisible(False)
+        style_table(self.tbl_found, 42)
         self.tbl_found.setEditTriggers(QTableWidget.NoEditTriggers)
         fh = self.tbl_found.horizontalHeader()
         fh.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -194,7 +196,7 @@ class DevicesPage(QWidget):
         split.addWidget(tabs)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 2)
-        split.setSizes([780, 480])
+        split.setSizes([840, 540])
 
         if not backend:
             self.btn_scan.setEnabled(False)
@@ -217,7 +219,7 @@ class DevicesPage(QWidget):
             (ok, text), paired = res
             self.btn_refresh.setEnabled(True)
             self.adapter_label.setText(("✔ " if ok else "✖ ") + text)
-            self.adapter_label.setStyleSheet(f"color: {GOOD if ok else CRITICAL}; font-weight: 600;")
+            self.adapter_label.setStyleSheet(f"color: {GOOD if ok else CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
             self.btn_power.setVisible(not ok)
             self.paired = paired
             self._render_all()
@@ -225,7 +227,7 @@ class DevicesPage(QWidget):
         def fail(e):
             self.btn_refresh.setEnabled(True)
             self.adapter_label.setText(f"✖ Bluetooth error: {e}")
-            self.adapter_label.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
+            self.adapter_label.setStyleSheet(f"color: {CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
 
         run_bg(work, done, fail, "refresh")
 
@@ -262,7 +264,7 @@ class DevicesPage(QWidget):
             it.setForeground(QColor(color))
             it.setToolTip(text)
             t.setItem(r, 3, it)
-            gear = QPushButton("⚙ Settings")
+            gear = set_role(QPushButton("⚙ Settings"), "small")
             gear.setToolTip("Firmware info and device configuration (sampling rate, sensors, gains, name)")
             gear.setEnabled(d.address not in self.busy)
             gear.clicked.connect(lambda _=False, mac=d.address, name=d.name: self._settings(mac, name))
@@ -422,7 +424,7 @@ class DevicesPage(QWidget):
 
         def status(text, color="#1f4e8c"):
             self.pair_status.setText(text)
-            self.pair_status.setStyleSheet(f"color: {color}; font-weight: 600;")
+            self.pair_status.setStyleSheet(f"color: {color}; font-weight: 700; font-size: {FONT_M}pt;")
 
         def work():
             for attempt in range(1, PAIR_ATTEMPTS + 1):

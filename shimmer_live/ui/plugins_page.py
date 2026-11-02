@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButt
 
 from ..plugins import registry
 from ..plugins.api import KIND_NAMES
-from .common import CRITICAL, MUTED
+from .common import CRITICAL, FONT_M, set_role
 from .dialogs import open_folder
 from .icons import logo_pixmap
 
@@ -25,10 +25,10 @@ class PluginsPage(QWidget):
         b.clicked.connect(self.back.emit)
         bar.addWidget(b)
         logo = QLabel()
-        logo.setPixmap(logo_pixmap(34))
+        logo.setPixmap(logo_pixmap(46))
         bar.addWidget(logo)
         t = QLabel("Plugins")
-        t.setStyleSheet("font-size: 16pt; font-weight: 700;")
+        set_role(t, "title")
         bar.addWidget(t)
         bar.addStretch(1)
         b = QPushButton("Open plugins folder")
@@ -46,7 +46,7 @@ class PluginsPage(QWidget):
                        f"file in <code>{registry.user_plugins_dir()}</code>.")
         intro.setWordWrap(True)
         intro.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        intro.setStyleSheet(f"color: {MUTED};")
+        set_role(intro, "muted")
         root.addWidget(intro)
 
         self.list = QVBoxLayout()
@@ -84,24 +84,26 @@ class PluginsPage(QWidget):
         for src, msg in self.errors:
             lab = QLabel(f"✖ <b>{src}</b>: {msg}")
             lab.setWordWrap(True)
-            lab.setStyleSheet(f"color: {CRITICAL};")
+            lab.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
             self.list.addWidget(lab)
         self.list.addStretch(1)
 
     def _card(self, e):
         c = e.cls
         card = QFrame()
-        card.setStyleSheet("QFrame#card { background: white; border: 1px solid #dcdcd8; border-radius: 6px; }")
+        card.setStyleSheet("QFrame#card { background: white; border: 1px solid #dcdcd8; border-radius: 8px; }")
         card.setObjectName("card")
         v = QVBoxLayout(card)
+        v.setContentsMargins(16, 12, 16, 12)
+        v.setSpacing(6)
         head = QHBoxLayout()
         cb = QCheckBox(f"{c.name}")
-        cb.setStyleSheet("font-weight: 700; font-size: 11pt;")
+        cb.setStyleSheet(f"font-weight: 700; font-size: {FONT_M}pt;")
         cb.setChecked(c.id in self.enabled_ids)
         cb.toggled.connect(lambda on, pid=c.id: self._set_enabled(pid, on))
         head.addWidget(cb)
         meta = QLabel(f"v{c.version} · {e.source}")
-        meta.setStyleSheet(f"color: {MUTED};")
+        set_role(meta, "muted")
         head.addStretch(1)
         head.addWidget(meta)
         v.addLayout(head)
@@ -112,6 +114,6 @@ class PluginsPage(QWidget):
                         (f" ({i.description})" if i.description else "") for i in c.inputs)
         outs = ", ".join(f"{o.label} [{o.unit}]" if o.unit else o.label for o in c.outputs)
         io = QLabel(f"<b>Needs:</b> {ins or '—'}<br><b>Produces:</b> {outs or '—'}")
-        io.setStyleSheet(f"color: {MUTED};")
+        set_role(io, "muted")
         v.addWidget(io)
         return card

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QColorDialog, QHBoxLayout, QHeaderView, QLabel, Q
                                QTableWidget, QVBoxLayout, QWidget)
 
 from .. import keypoints as kpmod
-from .common import MUTED
+from .common import MUTED, set_role, style_table
 
 
 class KeypointsEditor(QWidget):
@@ -18,11 +18,12 @@ class KeypointsEditor(QWidget):
                        "(and keys <b>1–9</b> for the first nine); a click draws a line on every plot and is saved "
                        "with the data of every Shimmer.")
         intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {MUTED};")
+        set_role(intro, "muted")
         lay.addWidget(intro)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Key", "Colour", "Name", ""])
         self.table.verticalHeader().setVisible(False)
+        style_table(self.table, 42)
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -52,8 +53,9 @@ class KeypointsEditor(QWidget):
             key.setAlignment(Qt.AlignCenter)
             t.setCellWidget(r, 0, key)
             sw = QPushButton()
-            sw.setFixedSize(46, 22)
-            sw.setStyleSheet(f"background: {k.color}; border: 1px solid #888; border-radius: 3px;")
+            sw.setFixedSize(58, 28)
+            sw.setStyleSheet(f"background: {k.color}; border: 1px solid #888; border-radius: 5px; padding: 0;"
+                             f" min-height: 0;")
             sw.setToolTip("Change colour")
             sw.clicked.connect(lambda _=False, i=r: self._pick_color(i))
             t.setCellWidget(r, 1, sw)
@@ -67,7 +69,7 @@ class KeypointsEditor(QWidget):
             if k.builtin:
                 t.setCellWidget(r, 3, QLabel(""))
             else:
-                rm = QPushButton("Remove")
+                rm = set_role(QPushButton("Remove"), "small")
                 rm.clicked.connect(lambda _=False, i=r: self._remove(i))
                 t.setCellWidget(r, 3, rm)
 

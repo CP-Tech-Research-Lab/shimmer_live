@@ -2,8 +2,8 @@
 import logging
 import threading
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, Signal, Slot
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QVBoxLayout, QWidget
 
 log = logging.getLogger("shimmerlive.ui")
 
@@ -21,23 +21,83 @@ INFO = "#1f4e8c"
 INFO_BG = "#e8f0fb"
 GOOD = "#1b7a3a"
 
+# ---- type scale (pt) and sizes: one place, so importance reads the same everywhere ----
+FONT_XS = 9.5      # plot axes, fine print
+FONT_S = 10        # helper text, secondary details
+FONT_BASE = 11     # body text, buttons, tables
+FONT_M = 12.5      # section headings, device names, important values
+FONT_L = 15        # status headlines
+FONT_XL = 20       # page titles
+FONT_XXL = 26      # the lost-connection panel while recording
+ROW_H = 34         # table rows
+ICON_BTN = 34      # square icon buttons (eye, record, gear)
+
 STYLESHEET = f"""
-QWidget {{ font-size: 10pt; color: {INK}; }}
-QMainWindow, QStackedWidget > QWidget {{ background: {SURFACE}; }}
-QGroupBox {{ font-weight: 600; border: 1px solid #dcdcd8; border-radius: 6px; margin-top: 14px; padding: 8px; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
-QPushButton {{ padding: 5px 12px; border-radius: 5px; border: 1px solid #c9c9c4; background: #ffffff; }}
-QPushButton:hover {{ background: #f1f1ee; }}
-QPushButton:disabled {{ color: #a5a5a0; background: #f6f6f4; }}
-QPushButton[role="primary"] {{ background: #2a78d6; color: white; border: 1px solid #1f63b5; font-weight: 600; }}
+QWidget {{ font-size: {FONT_BASE}pt; color: {INK}; }}
+QMainWindow, QStackedWidget > QWidget, QDialog {{ background: {SURFACE}; }}
+QLabel[role="title"] {{ font-size: {FONT_XL}pt; font-weight: 700; }}
+QLabel[role="section"] {{ font-size: {FONT_M}pt; font-weight: 700; }}
+QLabel[role="muted"] {{ font-size: {FONT_S}pt; color: {MUTED}; }}
+QGroupBox {{ font-size: {FONT_M}pt; font-weight: 700; border: 1px solid #dcdcd8; border-radius: 8px;
+             margin-top: 18px; padding: 12px 10px 10px 10px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 12px; padding: 0 6px; }}
+QGroupBox > QWidget, QGroupBox QLabel, QGroupBox QPushButton, QGroupBox QTableWidget, QGroupBox QCheckBox,
+QGroupBox QComboBox, QGroupBox QLineEdit {{ font-size: {FONT_BASE}pt; font-weight: 400; }}
+
+QPushButton {{ padding: 6px 14px; min-height: 22px; border-radius: 6px; border: 1px solid #c4c4bf;
+               background: #ffffff; }}
+QPushButton:hover {{ background: #f1f1ee; border-color: #9e9e99; }}
+QPushButton:pressed {{ background: #e6e6e2; }}
+QPushButton:disabled {{ color: #a5a5a0; background: #f6f6f4; border-color: #dcdcd8; }}
+QPushButton[role="primary"] {{ font-size: {FONT_M}pt; font-weight: 700; padding: 9px 22px; min-height: 24px;
+                               background: #2a78d6; color: white; border: 1px solid #1f63b5; }}
 QPushButton[role="primary"]:hover {{ background: #1f6bc4; }}
-QPushButton[role="primary"]:disabled {{ background: #a9c6ea; border-color: #a9c6ea; }}
-QPushButton[role="record"] {{ background: #c62828; color: white; border: 1px solid #a31f1f; font-weight: 600; }}
-QPushButton[role="record"]:disabled {{ background: #e8b0b0; border-color: #e8b0b0; }}
-QTableWidget {{ background: white; gridline-color: #ececea; border: 1px solid #dcdcd8; }}
-QHeaderView::section {{ background: #f4f4f2; border: none; border-bottom: 1px solid #dcdcd8; padding: 4px; font-weight: 600; }}
-QTextBrowser, QPlainTextEdit {{ background: white; border: 1px solid #dcdcd8; }}
+QPushButton[role="primary"]:disabled {{ background: #a9c6ea; border-color: #a9c6ea; color: #eef4fb; }}
+QPushButton[role="record"] {{ font-size: {FONT_M + 0.5}pt; font-weight: 700; padding: 10px 24px; min-height: 26px;
+                              background: #c62828; color: white; border: 1px solid #a31f1f; }}
+QPushButton[role="record"]:hover {{ background: #b02323; }}
+QPushButton[role="record"]:disabled {{ background: #ecc0c0; border-color: #ecc0c0; color: #fbeeee; }}
+QPushButton[role="stop"] {{ font-size: {FONT_M + 0.5}pt; font-weight: 700; padding: 10px 24px; min-height: 26px;
+                            background: #ffffff; color: #c62828; border: 2px solid #c62828; }}
+QPushButton[role="stop"]:hover {{ background: #fdecea; }}
+QPushButton[role="stop"]:disabled {{ color: #c9c9c4; border-color: #dcdcd8; background: #f6f6f4; }}
+QPushButton[role="keypoint"] {{ font-size: {FONT_BASE + 0.5}pt; font-weight: 600; padding: 8px 14px; min-height: 24px;
+                                text-align: left; }}
+QPushButton[role="small"] {{ font-size: {FONT_S}pt; padding: 4px 10px; min-height: 18px; }}
+QToolButton {{ border-radius: 6px; }}
+QToolButton:hover {{ background: #ececea; }}
+
+QComboBox, QLineEdit {{ padding: 5px 8px; min-height: 22px; border: 1px solid #c4c4bf; border-radius: 5px;
+                        background: white; }}
+QComboBox:focus, QLineEdit:focus, QPlainTextEdit:focus {{ border: 1px solid #2a78d6; }}
+QCheckBox {{ spacing: 8px; }}
+QCheckBox::indicator {{ width: 18px; height: 18px; }}
+QTabBar::tab {{ padding: 8px 18px; font-size: {FONT_BASE}pt; }}
+QTabBar::tab:selected {{ font-weight: 700; }}
+QTableWidget {{ background: white; gridline-color: #ececea; border: 1px solid #dcdcd8; border-radius: 4px; }}
+QHeaderView::section {{ background: #f4f4f2; border: none; border-bottom: 1px solid #dcdcd8; padding: 6px 8px;
+                        font-weight: 700; font-size: {FONT_S + 0.5}pt; }}
+QTextBrowser, QPlainTextEdit {{ background: white; border: 1px solid #dcdcd8; border-radius: 4px; padding: 4px; }}
+QProgressBar {{ min-height: 14px; max-height: 14px; border-radius: 4px; }}
+QToolTip {{ font-size: {FONT_S}pt; padding: 4px; }}
 """
+
+
+def style_table(table, row_height=ROW_H):
+    """Comfortable row height (not settable from a stylesheet)."""
+    table.verticalHeader().setDefaultSectionSize(row_height)
+    table.verticalHeader().setMinimumSectionSize(row_height)
+    table.horizontalHeader().setMinimumHeight(row_height)
+
+
+def fit_to_screen(widget, width, height, margin=0.92):
+    """Resize to (width, height), but never larger than the screen the widget is on."""
+    screen = widget.screen() if hasattr(widget, "screen") and widget.screen() else None
+    if screen is not None:
+        geo = screen.availableGeometry()
+        width = min(width, int(geo.width() * margin))
+        height = min(height, int(geo.height() * margin))
+    widget.resize(width, height)
 
 
 class _Bridge(QObject):
@@ -83,10 +143,12 @@ def run_bg(fn, on_done=None, on_fail=None, name="worker"):
     threading.Thread(target=work, daemon=True, name=name).start()
 
 
-def set_role(button: QPushButton, role: str):
-    button.setProperty("role", role)
-    button.style().unpolish(button)
-    button.style().polish(button)
+def set_role(widget, role: str):
+    """Apply a stylesheet role (title, section, muted, primary, record, stop, keypoint, small)."""
+    widget.setProperty("role", role)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    return widget
 
 
 def set_if_changed(label, text):
@@ -112,7 +174,7 @@ class Banner(QFrame):
         self.lab.setWordWrap(True)
         self.lab.setTextFormat(Qt.RichText)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setContentsMargins(12, 8, 12, 8)
         lay.addWidget(self.lab, 1)
         self.btn = None
         self._sev = self._text = None
@@ -126,8 +188,10 @@ class Banner(QFrame):
         fg, bg, icon = SEVERITY[severity]
         if severity != self._sev:          # restyling is expensive; only on severity change
             self._sev = severity
-            self.setStyleSheet(f"Banner {{ background: {bg}; border: 1px solid {fg}; border-left: 6px solid {fg};"
-                               f" border-radius: 4px; }} QLabel {{ color: {fg}; font-weight: 600; }}")
+            size = FONT_BASE + 0.5 if severity == "critical" else FONT_BASE
+            self.setStyleSheet(f"Banner {{ background: {bg}; border: 1px solid {fg}; border-left: 8px solid {fg};"
+                               f" border-radius: 6px; }} QLabel {{ color: {fg}; font-weight: 700; "
+                               f"font-size: {size}pt; }}")
         if text != self._text:
             self._text = text
             self.lab.setText(f"{icon}&nbsp; {text}")
@@ -142,7 +206,7 @@ class AlertArea(QWidget):
         super().__init__()
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
-        self.lay.setSpacing(4)
+        self.lay.setSpacing(6)
         self.banners = {}
         self._order = []
 
@@ -167,3 +231,59 @@ class AlertArea(QWidget):
                 self.lay.addWidget(self.banners[k])
         if self.isHidden() == bool(self.banners):
             self.setVisible(bool(self.banners))
+
+
+class FlowLayout(QLayout):
+    """Lays widgets out left to right and wraps to a new row when the width runs out."""
+
+    def __init__(self, parent=None, spacing=8):
+        super().__init__(parent)
+        self._items = []
+        self._spacing = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientations(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._arrange(QRect(0, 0, width, 0), dry_run=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._arrange(rect, dry_run=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for it in self._items:
+            size = size.expandedTo(it.minimumSize())
+        return size
+
+    def _arrange(self, rect, dry_run):
+        x, y, row_h = rect.x(), rect.y(), 0
+        for it in self._items:
+            hint = it.sizeHint()
+            if x + hint.width() > rect.right() + 1 and row_h > 0:
+                x, y, row_h = rect.x(), y + row_h + self._spacing, 0
+            if not dry_run:
+                it.setGeometry(QRect(QPoint(x, y), hint))
+            x += hint.width() + self._spacing
+            row_h = max(row_h, hint.height())
+        return y + row_h - rect.y()
