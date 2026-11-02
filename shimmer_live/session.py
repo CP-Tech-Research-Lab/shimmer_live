@@ -232,7 +232,7 @@ class ShimmerSession:
     def configure(self, rate, chans, exg_gains):
         """Set up channel decoding and the plot buffer for the device's stream layout."""
         self.specs = build_specs(chans, exg_gains)
-        self.plot_specs = [s for s in self.specs if s.plot]
+        self.plot_specs = list(self.specs)          # any channel can be shown; visibility is chosen in the UI
         self.rate = rate
         self.kind = device_kind(chans)
         self.battery_from_stream = EChannelType.VBATT in chans
@@ -377,8 +377,7 @@ class ShimmerSession:
                         self.no_contact_since = hp
                 else:
                     self.no_contact_since = None
-            if s.plot:
-                plot_vals.append(val)
+            plot_vals.append(val)
         if self.ring is not None:
             # Average blocks of plot_decim samples (a simple low-pass, so mains hum does not
             # alias into slow fake waves); plotted at the block's centre time.

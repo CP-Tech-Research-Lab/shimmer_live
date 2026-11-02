@@ -47,7 +47,7 @@ class ChannelSpec:
     label: str                  # human label for plots
     unit: Optional[str]         # physical unit, None when only raw is known
     convert: Optional[Callable[[int], float]]
-    plot: bool = True
+    default_on: bool = False   # shown in live view and recorded unless the user changes it (ECG and EDA only)
     kind: str = "other"         # gsr | exg | vbatt | other
     export_name: str = ""       # Consensys-style column name, e.g. "ECG_LL-RA_24BIT_CAL"
     export_unit: str = "no_units"
@@ -79,23 +79,23 @@ def build_specs(chans, exg_gains: dict) -> list[ChannelSpec]:
         if c == EChannelType.TIMESTAMP:
             continue
         if c == EChannelType.GSR_RAW:
-            specs.append(ChannelSpec(c, "GSR", "GSR skin conductance", "uS", gsr_raw_to_us, kind="gsr",
+            specs.append(ChannelSpec(c, "GSR", "GSR skin conductance", "uS", gsr_raw_to_us, kind="gsr", default_on=True,
                                      export_name="GSR_Skin_Conductance_CAL", export_unit="uS",
                                      calibration={"formula": "gsr"}))
         elif c == EChannelType.VBATT:
-            specs.append(ChannelSpec(c, "VBATT", "Battery voltage", "mV", vbatt_raw_to_mv, plot=False, kind="vbatt",
+            specs.append(ChannelSpec(c, "VBATT", "Battery voltage", "mV", vbatt_raw_to_mv, kind="vbatt",
                                      export_name="Battery_CAL", export_unit="mV", calibration={"formula": "vbatt"}))
         elif c in EXG_CHANNELS:
             label, chip, ch, export = EXG_CHANNELS[c]
             gain = exg_gains.get((chip, ch), 1)
             key = f"EXG{chip + 1}_CH{ch + 1}"
-            specs.append(ChannelSpec(c, key, f"{label} (gain {gain})", "mV", exg_to_mv(gain), kind="exg",
+            specs.append(ChannelSpec(c, key, f"{label} (gain {gain})", "mV", exg_to_mv(gain), kind="exg", default_on=True,
                                      export_name=export, export_unit="mV",
                                      calibration={"formula": "exg", "gain": gain}))
         elif c in STATUS_CHANNELS:
             n = 1 if c == EChannelType.EXG_ADS1292R_1_STATUS else 2
             specs.append(ChannelSpec(c, c.name.replace("EXG_ADS1292R_", "EXG"), f"ECG/EMG status {n}", None, None,
-                                     plot=False, export_name=f"ECG_EMG_Status{n}_CAL"))
+                                     export_name=f"ECG_EMG_Status{n}_CAL"))
         else:
             # Channels this app has no calibration for are still recorded and plotted raw.
             specs.append(ChannelSpec(c, c.name, f"{c.name} (raw)", None, None, export_name=f"{c.name}_RAW"))

@@ -27,7 +27,8 @@ LOW_RATE_FRACTION = 0.85
 DISK_WARN_BYTES = 1_000_000_000
 PLOT_ROW_PX = 190
 PANEL_WIDTH = 320
-MARK_KEEP_S = 70.0                  # keypoint lines are kept a little longer than the longest window
+MARK_KEEP_S = 70.0
+SIGNAL_DEFAULTS_VERSION = 2         # bump when the default eye/record choices change                  # keypoint lines are kept a little longer than the longest window
 
 
 def display_unit(unit):
@@ -100,20 +101,19 @@ class DeviceCard(QFrame):
 class SignalRow(QWidget):
     """👁 show in live view · ● record · label."""
 
-    def __init__(self, label, visible, record, can_plot, on_change):
+    def __init__(self, label, visible, record, on_change):
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self.eye = QToolButton()
         self.eye.setCheckable(True)
-        self.eye.setChecked(visible and can_plot)
-        self.eye.setEnabled(can_plot)
-        self.eye.setToolTip("Show in live view" if can_plot else "Not plotted (shown on the device card)")
+        self.eye.setChecked(visible)
+        self.eye.setToolTip("Show or hide this signal in the live plots")
         self.rec = QToolButton()
         self.rec.setCheckable(True)
         self.rec.setChecked(record)
-        self.rec.setToolTip("Record this signal (locked while recording)")
+        self.rec.setToolTip("Record this signal or not (locked while a recording is running)")
         for b in (self.eye, self.rec):
             b.setAutoRaise(True)
             b.setFixedSize(ICON_BTN, ICON_BTN - 4)
@@ -128,8 +128,7 @@ class SignalRow(QWidget):
         self.rec.toggled.connect(lambda _: (self._paint(), on_change()))
 
     def _paint(self):
-        self.eye.setIcon(icon("eye" if self.eye.isChecked() else "eye_off",
-                              INK if self.eye.isEnabled() else "#b0b0ab"))
+        self.eye.setIcon(icon("eye" if self.eye.isChecked() else "eye_off", INK if self.eye.isChecked() else "#9a9a95"))
         self.rec.setIcon(icon("rec_on" if self.rec.isChecked() else "rec_off",
                               CRITICAL if self.rec.isChecked() else "#9a9a95"))
 
@@ -154,6 +153,11 @@ class LivePage(QWidget):
         self.rows = {}              # (mac, signal key) -> SignalRow
         self.keypoints = []
         self.marks = []             # [t_plot, name, color, [(plot, line), ...]]
+        if cfg.data.get("signal_defaults_version") != SIGNAL_DEFAULTS_VERSION:
+            # Defaults changed (only ECG and EDA on): forget per-signal choices saved under the old ones.
+            cfg.data["signals"] = {}
+            cfg.data["signal_defaults_version"] = SIGNAL_DEFAULTS_VERSION
+            cfg.save()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)
@@ -164,7 +168,7 @@ class LivePage(QWidget):
         self.btn_back.clicked.connect(self._on_back)
         bar.addWidget(self.btn_back)
         logo = QLabel()
-        logo.setPixmap(logo_pixmap(40))
+        logo.setPixmap(logo_pixmap(60))
         bar.addWidget(logo)
         t = set_role(QLabel("Live data"), "title")
         bar.addWidget(t)
@@ -344,23 +348,22 @@ class LivePage(QWidget):
         self.back.emit()
 
     # ---------------- signal selection (eye / record) ----------------
-    def _sig_state(self, mac, key, default_visible=True) -> dict:
+    def _sig_state(self, mac, key, default_on=True) -> dict:
         return self.cfg.data.setdefault("signals", {}).setdefault(mac, {}).setdefault(
-            key, {"visible": default_visible, "record": True})
+            key, {"visible": default_on, "record": default_on})
 
-    def is_visible(self, mac, key):
+    def is_visible(self, mac, key, default_on=True):
         row = self.rows.get((mac, key))
-        return row.eye.isChecked() if row else self._sig_state(mac, key)["visible"]
+        return row.eye.isChecked() if row else self._sig_state(mac, key, default_on)["visible"]
 
-    def is_recorded(self, mac, key):
+    def is_recorded(self, mac, key, default_on=True):
         row = self.rows.get((mac, key))
-        return row.rec.isChecked() if row else self._sig_state(mac, key)["record"]
+        return row.rec.isChecked() if row else self._sig_state(mac, key, default_on)["record"]
 
     def _signals_changed(self):
         for (mac, key), row in self.rows.items():
             st = self._sig_state(mac, key)
-            if row.eye.isEnabled():
-                st["visible"] = row.eye.isChecked()
+            st["visible"] = row.eye.isChecked()
             st["record"] = row.rec.isChecked()
         self.cfg.save()
         self._built_for = None                      # rebuild plots with the new visibility
@@ -422,18 +425,16 @@ class LivePage(QWidget):
                 w = set_role(QLabel("waiting for connection…"), "muted")
                 self.panel_lay.addWidget(w)
                 continue
-            plotted = {sp.key for sp in s.plot_specs}
             for sp in s.specs:
-                st = self._sig_state(s.mac, sp.key, sp.plot)
-                row = SignalRow(sp.label, st["visible"], st["record"], sp.key in plotted, self._signals_changed)
+                st = self._sig_state(s.mac, sp.key, sp.default_on)
+                row = SignalRow(sp.label, st["visible"], st["record"], self._signals_changed)
                 self.rows[(s.mac, sp.key)] = row
                 self.panel_lay.addWidget(row)
             for b in self._bindings(s):
                 for o in b.cls.outputs:
                     k = plugin_key(b, o)
                     st = self._sig_state(s.mac, k)
-                    row = SignalRow(f"{b.cls.name}: {o.label}", st["visible"], st["record"], True,
-                                    self._signals_changed)
+                    row = SignalRow(f"{b.cls.name}: {o.label}", st["visible"], st["record"], self._signals_changed)
                     self.rows[(s.mac, k)] = row
                     self.panel_lay.addWidget(row)
         self.panel_lay.addStretch(1)
@@ -518,7 +519,7 @@ class LivePage(QWidget):
             if s.ring is None:
                 continue
             for i, sp in enumerate(s.plot_specs):
-                if self.is_visible(s.mac, sp.key):
+                if self.is_visible(s.mac, sp.key, sp.default_on):
                     entries.append(("dev", s, None, i, sp))
             for b in self._bindings(s):
                 for o in b.cls.outputs:
@@ -754,7 +755,8 @@ class LivePage(QWidget):
         not_ready = [s for s in self.sessions if not s.specs]
         if not ready:
             return
-        record_keys = {s.mac: {sp.key for sp in s.specs if self.is_recorded(s.mac, sp.key)} for s in ready}
+        record_keys = {s.mac: {sp.key for sp in s.specs if self.is_recorded(s.mac, sp.key, sp.default_on)}
+                       for s in ready}
         plugin_outputs = {}
         for s in ready:
             for b in self._bindings(s):

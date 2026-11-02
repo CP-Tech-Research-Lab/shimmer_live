@@ -52,8 +52,10 @@ def test_build_specs_columns_and_kinds():
     assert "TIMESTAMP" not in by_key
     assert by_key["GSR"].columns == ["GSR_raw", "GSR_uS"]
     assert by_key["EXG1_CH1"].columns == ["EXG1_CH1_raw", "EXG1_CH1_mV"]
-    assert by_key["EXG1_STATUS"].columns == ["EXG1_STATUS_raw"] and not by_key["EXG1_STATUS"].plot
-    assert not by_key["VBATT"].plot
+    assert by_key["EXG1_STATUS"].columns == ["EXG1_STATUS_raw"]
+    # only ECG and EDA are shown and recorded by default
+    assert by_key["GSR"].default_on and by_key["EXG1_CH1"].default_on
+    assert not by_key["VBATT"].default_on and not by_key["EXG1_STATUS"].default_on
 
 
 def test_device_kind():
@@ -80,3 +82,9 @@ def test_specs_carry_calibration_parameters():
     assert specs["EXG1_CH1"].calibration == {"formula": "exg", "gain": 12}
     assert specs["GSR"].calibration == {"formula": "gsr"}
     assert specs["EXG1_STATUS"].calibration == {}
+
+
+def test_imu_channels_off_by_default():
+    specs = build_specs([E.ACCEL_LN_X, E.GYRO_MPU9150_Y, E.MAG_LSM303DLHC_Z, E.GSR_RAW], {})
+    assert {s.key: s.default_on for s in specs} == {"ACCEL_LN_X": False, "GYRO_MPU9150_Y": False,
+                                                    "MAG_LSM303DLHC_Z": False, "GSR": True}
