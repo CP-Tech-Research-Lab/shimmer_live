@@ -47,6 +47,8 @@ class ChannelSpec:
     convert: Optional[Callable[[int], float]]
     plot: bool = True
     kind: str = "other"         # gsr | exg | vbatt | other
+    export_name: str = ""       # Consensys-style column name, e.g. "ECG_LL-RA_24BIT_CAL"
+    export_unit: str = "no_units"
 
     @property
     def columns(self) -> list[str]:
@@ -56,12 +58,13 @@ class ChannelSpec:
         return cols
 
 
-# Standard Shimmer3 ECG lead naming of the four ExG channels: (label, chip, channel-on-chip).
+# Shimmer3 ECG lead naming of the four ExG channels, as in Consensys exports:
+# (label, chip, channel-on-chip, Consensys column name).
 EXG_CHANNELS = {
-    EChannelType.EXG_ADS1292R_1_CH1_24BIT: ("ECG LL-RA", 0, 0),
-    EChannelType.EXG_ADS1292R_1_CH2_24BIT: ("ECG LA-RA", 0, 1),
-    EChannelType.EXG_ADS1292R_2_CH1_24BIT: ("ExG2 CH1", 1, 0),
-    EChannelType.EXG_ADS1292R_2_CH2_24BIT: ("ECG Vx-RL", 1, 1),
+    EChannelType.EXG_ADS1292R_1_CH1_24BIT: ("ECG LL-RA", 0, 0, "ECG_LL-RA_24BIT_CAL"),
+    EChannelType.EXG_ADS1292R_1_CH2_24BIT: ("ECG LA-RA", 0, 1, "ECG_LA-RA_24BIT_CAL"),
+    EChannelType.EXG_ADS1292R_2_CH1_24BIT: ("ECG RESP", 1, 0, "ECG_RESP_24BIT_CAL"),
+    EChannelType.EXG_ADS1292R_2_CH2_24BIT: ("ECG Vx-RL", 1, 1, "ECG_Vx-RL_24BIT_CAL"),
 }
 STATUS_CHANNELS = {EChannelType.EXG_ADS1292R_1_STATUS, EChannelType.EXG_ADS1292R_2_STATUS}
 
@@ -73,19 +76,24 @@ def build_specs(chans, exg_gains: dict) -> list[ChannelSpec]:
         if c == EChannelType.TIMESTAMP:
             continue
         if c == EChannelType.GSR_RAW:
-            specs.append(ChannelSpec(c, "GSR", "GSR skin conductance", "uS", gsr_raw_to_us, kind="gsr"))
+            specs.append(ChannelSpec(c, "GSR", "GSR skin conductance", "uS", gsr_raw_to_us, kind="gsr",
+                                     export_name="GSR_Skin_Conductance_CAL", export_unit="uS"))
         elif c == EChannelType.VBATT:
-            specs.append(ChannelSpec(c, "VBATT", "Battery voltage", "mV", vbatt_raw_to_mv, plot=False, kind="vbatt"))
+            specs.append(ChannelSpec(c, "VBATT", "Battery voltage", "mV", vbatt_raw_to_mv, plot=False, kind="vbatt",
+                                     export_name="Battery_CAL", export_unit="mV"))
         elif c in EXG_CHANNELS:
-            label, chip, ch = EXG_CHANNELS[c]
+            label, chip, ch, export = EXG_CHANNELS[c]
             gain = exg_gains.get((chip, ch), 1)
             key = f"EXG{chip + 1}_CH{ch + 1}"
-            specs.append(ChannelSpec(c, key, f"{label} (gain {gain})", "mV", exg_to_mv(gain), kind="exg"))
+            specs.append(ChannelSpec(c, key, f"{label} (gain {gain})", "mV", exg_to_mv(gain), kind="exg",
+                                     export_name=export, export_unit="mV"))
         elif c in STATUS_CHANNELS:
-            specs.append(ChannelSpec(c, c.name.replace("EXG_ADS1292R_", "EXG"), c.name, None, None, plot=False))
+            n = 1 if c == EChannelType.EXG_ADS1292R_1_STATUS else 2
+            specs.append(ChannelSpec(c, c.name.replace("EXG_ADS1292R_", "EXG"), f"ECG/EMG status {n}", None, None,
+                                     plot=False, export_name=f"ECG_EMG_Status{n}_CAL"))
         else:
             # Channels this app has no calibration for are still recorded and plotted raw.
-            specs.append(ChannelSpec(c, c.name, f"{c.name} (raw)", None, None))
+            specs.append(ChannelSpec(c, c.name, f"{c.name} (raw)", None, None, export_name=f"{c.name}_RAW"))
     return specs
 
 
