@@ -18,7 +18,8 @@ from .common import (CRITICAL, DEVICE_COLORS, FONT_BASE, FONT_L, FONT_M, FONT_S,
                      set_role)
 from .device_settings import DeviceInfoDialog
 from .dialogs import CalibrationDialog, SaveRecordingDialog, TimingInfoDialog
-from .icons import icon, logo_pixmap
+from .branding import BrandHeader
+from .icons import icon
 
 log = logging.getLogger("shimmerlive.live")
 
@@ -167,22 +168,19 @@ class LivePage(QWidget):
         self.btn_back = QPushButton("◀  Devices")
         self.btn_back.clicked.connect(self._on_back)
         bar.addWidget(self.btn_back)
-        logo = QLabel()
-        logo.setPixmap(logo_pixmap(60))
-        bar.addWidget(logo)
-        t = set_role(QLabel("Live data"), "title")
-        bar.addWidget(t)
+        bar.addSpacing(6)
+        bar.addWidget(BrandHeader("Live data", compact=True))
         bar.addSpacing(16)
-        self.btn_panel = QPushButton("Signals ◂")
+        self.btn_panel = set_role(QPushButton("Signals ◂"), "small")
         self.btn_panel.setCheckable(True)
         self.btn_panel.setChecked(True)
         self.btn_panel.setToolTip("Show/hide the signals panel (eye = show, dot = record)")
         self.btn_panel.toggled.connect(self._toggle_panel)
         bar.addWidget(self.btn_panel)
-        bar.addWidget(QLabel("Window:"))
         self.win_combo = QComboBox()
-        for s in (5, 10, 20, 30, 60):
-            self.win_combo.addItem(f"{s} s", s)
+        self.win_combo.setToolTip("How many seconds of signal the plots show")
+        for sec in (5, 10, 20, 30, 60):
+            self.win_combo.addItem(f"{sec} s window", sec)
         self.win_combo.setCurrentIndex(1)
         self.win_combo.currentIndexChanged.connect(lambda _: setattr(self, "window_s",
                                                                      float(self.win_combo.currentData())))

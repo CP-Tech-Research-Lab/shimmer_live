@@ -5,9 +5,9 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButt
 
 from ..plugins import registry
 from ..plugins.api import KIND_NAMES
-from .common import CRITICAL, FONT_M, set_role
+from .common import CRITICAL, FONT_M, divider, set_role
 from .dialogs import open_folder
-from .icons import logo_pixmap
+from .branding import BrandHeader
 
 
 class PluginsPage(QWidget):
@@ -24,12 +24,8 @@ class PluginsPage(QWidget):
         b = QPushButton("◀  Devices")
         b.clicked.connect(self.back.emit)
         bar.addWidget(b)
-        logo = QLabel()
-        logo.setPixmap(logo_pixmap(80))
-        bar.addWidget(logo)
-        t = QLabel("Plugins")
-        set_role(t, "title")
-        bar.addWidget(t)
+        bar.addSpacing(8)
+        bar.addWidget(BrandHeader("Plugins"))
         bar.addStretch(1)
         b = QPushButton("Open plugins folder")
         b.setToolTip("Put your own plugin .py files here (see PLUGINS.md)")
@@ -39,6 +35,7 @@ class PluginsPage(QWidget):
         b.clicked.connect(self.reload)
         bar.addWidget(b)
         root.addLayout(bar)
+        root.addWidget(divider())
 
         intro = QLabel("Selected plugins run in live view on every device that provides the signals they need. "
                        "Their results are plotted with the device's signals and can be recorded like any other "

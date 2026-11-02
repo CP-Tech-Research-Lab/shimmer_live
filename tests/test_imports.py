@@ -10,7 +10,7 @@ MODULES = ["shimmer_live.clocks", "shimmer_live.config", "shimmer_live.conversio
            "shimmer_live.alignment", "shimmer_live.keypoints", "shimmer_live.device_config", "shimmer_live.bt",
            "shimmer_live.plugins.api", "shimmer_live.plugins.registry", "shimmer_live.plugins.host",
            "shimmer_live.plugins.builtin.hrv"]
-UI_MODULES = ["shimmer_live.ui.common", "shimmer_live.ui.guide", "shimmer_live.ui.dialogs", "shimmer_live.ui.icons",
+UI_MODULES = ["shimmer_live.ui.common", "shimmer_live.ui.branding", "shimmer_live.ui.guide", "shimmer_live.ui.dialogs", "shimmer_live.ui.icons",
               "shimmer_live.ui.keypoints_editor", "shimmer_live.ui.plugins_page",
               "shimmer_live.ui.device_settings", "shimmer_live.ui.devices_page", "shimmer_live.ui.live_page",
               "shimmer_live.ui.main_window", "shimmer_live.__main__"]

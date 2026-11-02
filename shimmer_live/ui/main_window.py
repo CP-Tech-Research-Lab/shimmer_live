@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget
 from .. import export
 from ..bt import BackendUnavailable, get_backend
 from .devices_page import DevicesPage
+from .branding import APP_NAME, lab_name
 from .common import fit_to_screen
 from .dialogs import SaveRecordingDialog
 from .icons import app_icon
@@ -20,7 +21,7 @@ class MainWindow(QMainWindow):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.setWindowTitle("Shimmer Live")
+        self.setWindowTitle(f"{lab_name()} — {APP_NAME}")
         self.setWindowIcon(app_icon())
         fit_to_screen(self, 1480, 940)
         try:

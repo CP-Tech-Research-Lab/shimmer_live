@@ -13,11 +13,11 @@ from PySide6.QtWidgets import (QCheckBox, QGroupBox, QHBoxLayout, QHeaderView, Q
 
 from ..bt import BtDevice, PairingError
 from ..session import probe_device
-from .common import CRITICAL, FONT_M, GOOD, MUTED, WARNING, Banner, run_bg, set_role, style_table, ui_call
+from .common import CRITICAL, FONT_M, GOOD, MUTED, WARNING, Banner, divider, run_bg, set_role, style_table, ui_call
 from .device_settings import DeviceSettingsDialog
 from .dialogs import PinDialog
 from .guide import GUIDE_HTML
-from .icons import logo_pixmap
+from .branding import BrandHeader
 from .keypoints_editor import KeypointsEditor
 
 log = logging.getLogger("shimmerlive.devices")
@@ -69,26 +69,23 @@ class DevicesPage(QWidget):
         self.found: list[BtDevice] = []
         self.live_blocked = False
 
-        root = QHBoxLayout(self)
-        split = QSplitter(Qt.Horizontal)
-        root.addWidget(split)
-
-        # ---------------- left: devices ----------------
-        left = QWidget()
-        lv = QVBoxLayout(left)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 10)
         head = QHBoxLayout()
-        logo = QLabel()
-        logo.setPixmap(logo_pixmap(96))
-        head.addWidget(logo)
-        title = QLabel("Devices")
-        set_role(title, "title")
-        head.addWidget(title)
+        head.addWidget(BrandHeader("Devices"))
         head.addStretch(1)
         self.btn_plugins = QPushButton("Plugins…")
         self.btn_plugins.setToolTip("Choose plugins (e.g. real-time HRV) that run in live view")
         self.btn_plugins.clicked.connect(self.show_plugins.emit)
-        head.addWidget(self.btn_plugins)
-        lv.addLayout(head)
+        head.addWidget(self.btn_plugins, 0, Qt.AlignVCenter)
+        root.addLayout(head)
+        root.addWidget(divider())
+        split = QSplitter(Qt.Horizontal)
+        root.addWidget(split, 1)
+
+        # ---------------- left: devices ----------------
+        left = QWidget()
+        lv = QVBoxLayout(left)
 
         self.adapter_row = QHBoxLayout()
         self.adapter_label = QLabel("checking Bluetooth…")

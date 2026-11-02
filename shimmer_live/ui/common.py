@@ -53,11 +53,11 @@ QPushButton[role="primary"] {{ font-size: {FONT_M}pt; font-weight: 700; padding:
                                background: #2a78d6; color: white; border: 1px solid #1f63b5; }}
 QPushButton[role="primary"]:hover {{ background: #1f6bc4; }}
 QPushButton[role="primary"]:disabled {{ background: #a9c6ea; border-color: #a9c6ea; color: #eef4fb; }}
-QPushButton[role="record"] {{ font-size: {FONT_M + 0.5}pt; font-weight: 700; padding: 10px 24px; min-height: 26px;
+QPushButton[role="record"] {{ font-size: {FONT_M + 0.5}pt; font-weight: 700; padding: 10px 18px; min-height: 26px;
                               background: #c62828; color: white; border: 1px solid #a31f1f; }}
 QPushButton[role="record"]:hover {{ background: #b02323; }}
 QPushButton[role="record"]:disabled {{ background: #ecc0c0; border-color: #ecc0c0; color: #fbeeee; }}
-QPushButton[role="stop"] {{ font-size: {FONT_M + 0.5}pt; font-weight: 700; padding: 10px 24px; min-height: 26px;
+QPushButton[role="stop"] {{ font-size: {FONT_M + 0.5}pt; font-weight: 700; padding: 10px 18px; min-height: 26px;
                             background: #ffffff; color: #c62828; border: 2px solid #c62828; }}
 QPushButton[role="stop"]:hover {{ background: #fdecea; }}
 QPushButton[role="stop"]:disabled {{ color: #c9c9c4; border-color: #dcdcd8; background: #f6f6f4; }}
@@ -81,6 +81,14 @@ QTextBrowser, QPlainTextEdit {{ background: white; border: 1px solid #dcdcd8; bo
 QProgressBar {{ min-height: 14px; max-height: 14px; border-radius: 4px; }}
 QToolTip {{ font-size: {FONT_S}pt; padding: 4px; }}
 """
+
+
+def divider() -> QFrame:
+    """Thin horizontal rule under page headers."""
+    line = QFrame()
+    line.setFixedHeight(1)
+    line.setStyleSheet("background: #dcdcd8; border: none;")
+    return line
 
 
 def style_table(table, row_height=ROW_H):
