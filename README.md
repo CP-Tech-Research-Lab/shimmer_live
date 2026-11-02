@@ -14,7 +14,7 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
 1. **Start page (Devices).** It lists the paired devices. Tick the ones you want to use.
    - *Test connection* reads each device's firmware, sampling rate, sensors and battery.
    - *Forget* removes a pairing.
-   - *⚙ Settings* connects to the device and shows its firmware, battery and configuration. From there you can change the sampling rate (with an estimate of the Bluetooth load), enabled sensors, ECG/ExG gains, GSR range and device name, and set the device clock to the PC's time. Changes are written to the Shimmer and read back to verify them.
+   - *⚙ Settings* connects to the device and shows its firmware, battery and configuration. From there you can change the sampling rate (a preset, or any value typed from 1 to 2048 Hz; the dialog shows the exact rate the device will use, since it divides a 32768 Hz clock by a whole number, e.g. 300 Hz → 32768 ÷ 109 = 300.62 Hz) with an estimate of the Bluetooth load, enabled sensors, ECG/ExG gains, GSR range and device name, and set the device clock to the PC's time. Changes are written to the Shimmer and read back to verify them.
    - *Scan for devices* finds new Shimmers. *Pair* pairs one, retrying up to 3 times. If the device asks for a PIN, a pop-up appears; the PIN is **1234**. After pairing, the device is tested automatically.
    - Tabs on the right:
      - *Guide:* how to connect a Shimmer, what the LEDs mean, and what to do when a device doesn't respond.
@@ -24,6 +24,7 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
 2. **Show live data.** One plot per signal, coloured per device, with a 5–60 s window.
    - Signals above 128 Hz are averaged to about 128 Hz for display only; recordings keep every sample.
    - Each device has a status card: state, received vs. nominal sampling rate, battery, plugin status, and a ⚙ button with device info.
+   - **Values to record** (top left): *Raw device values* (default) or *Calibrated (mV, µS)*. See [Calibration](#calibration).
    - The **Signals panel** (left) has two buttons per signal, plugin outputs included:
      - **eye** shows or hides the signal in live view;
      - **dot** selects whether it is recorded. Record choices lock once a recording starts.
@@ -69,7 +70,20 @@ Every device and plugin file starts with three timestamps:
 
 The two PC timestamps are *sampling* times, not packet arrival times. Bluetooth delays packets by tens to hundreds of milliseconds. For each connection period, the Shimmer clock is fitted to the PC clock along the lower edge of the arrival times (the lower convex hull); this removes the latency and corrects clock drift. In tests with simulated latency, this recovers sampling times to within about 1 ms.
 
-The channels follow Consensys naming (`ECG_LL-RA_24BIT_CAL`, `ECG_LA-RA_24BIT_CAL`, `ECG_RESP_24BIT_CAL`, `ECG_Vx-RL_24BIT_CAL`, the derived `ECG_LL-LA_24BIT_CAL`, `GSR_Skin_Conductance_CAL`, `Battery_CAL`, …), followed by `<device>_Keypoint`, which holds the keypoint name at the nearest sample.
+The channels follow Consensys naming (`ECG_LL-RA_24BIT`, `ECG_LA-RA_24BIT`, `ECG_RESP_24BIT`, `ECG_Vx-RL_24BIT`, `GSR_Skin_Conductance`, `Battery`, …). By default they hold **raw device values** and end in `_RAW`. With *Calibrated* selected they hold physical units and end in `_CAL`, plus the derived `ECG_LL-LA_24BIT_CAL` as in Consensys. The last column, `<device>_Keypoint`, holds the keypoint name at the nearest sample.
+
+## Calibration
+
+Raw values are integers exactly as the Shimmer sent them; nothing is lost. The live plots, plugins and quality checks always use calibrated values. These are the nominal Shimmer3 conversions, the same ones Consensys and pyshimmer use for these sensors. Each recording's `info.json` also lists, per column, the formula and its parameters (e.g. the ECG gain read from the device), and the live view has an *ⓘ How values are calibrated* button.
+
+| sensor | raw value | calibrated value |
+|---|---|---|
+| ECG/ExG (ADS1292R) | 24-bit signed integer | mV = raw × (2420 / gain) / (2²³ − 1). 2420 mV is the chip reference; gain is 1, 2, 3, 4, 6, 8 or 12, read from the chip at connect. ±8388607 = saturated (lead off) |
+| GSR+ | 16-bit word: bits 15–14 = range, bits 11–0 = ADC | range selects Rf = 40.2 kΩ / 287 kΩ / 1 MΩ / 3.3 MΩ; V = ADC × 3.0 / 4095; R (kΩ) = Rf / (V / 0.5 − 1); conductance (µS) = 1000 / R. V ≤ 0.5 V means no skin contact (empty) |
+| Battery | 12-bit ADC | mV = raw × 3000 / 4095 × 1.988 |
+| ECG/EMG status, other channels | as sent | not calibrated |
+
+The formulas live in one place in the code, `shimmer_live/conversions.py` (`CALIBRATION_DOC` and `calibrate_array`). A test checks that converting a recorded raw column gives exactly the values the live view shows.
 
 The **quality checks** are heuristics with thresholds listed in `shimmer_live/qc.py`. They flag likely problems; they are not a clinical assessment:
 - completeness and connection losses;
