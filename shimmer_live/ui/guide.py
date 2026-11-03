@@ -10,7 +10,19 @@ def _dot(*colors):
 B, G, Y, R = "#1e6fd9", "#1b9e3e", "#e0a100", "#d32f2f"
 
 GUIDE_HTML = f"""
-<h3>Connecting a new Shimmer</h3>
+<h3>Fastest: set up Shimmers from the base</h3>
+<ol>
+<li>Put the Shimmers in a <b>Shimmer Base</b> (or Dock) connected to this computer by USB and switch them on.</li>
+<li>The <b>Docked in base</b> tab opens by itself and shows which Shimmer is in which slot, read over USB.</li>
+<li>Press <b>Set up docked Shimmers</b>. For each one the app pairs it (entering the PIN 1234 for you), tests the
+    connection and sets its clock, then shows <i>ready</i> or what is wrong in plain words. Shimmers with
+    logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
+<li>Ready Shimmers are added to the paired list, ticked: press <b>Show live data</b>.</li>
+</ol>
+<p>A Shimmer that is <i>paired but will not connect</i> (e.g. it was paired with another computer since) is fixed
+automatically: its old pairing is removed and it is paired again.</p>
+
+<h3>Connecting a new Shimmer without a base</h3>
 <ol>
 <li><b>Charge and switch on.</b> Use the slide switch on the Shimmer. In the dock/base it charges and can still stream.</li>
 <li><b>Check the upper LED:</b> a short <b>blue blink every 2 s</b> {_dot(B)} means it is on and waiting for a connection.

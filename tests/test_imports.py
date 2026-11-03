@@ -9,8 +9,8 @@ MODULES = ["shimmer_live.clocks", "shimmer_live.config", "shimmer_live.conversio
            "shimmer_live.session", "shimmer_live.recorder", "shimmer_live.export", "shimmer_live.qc",
            "shimmer_live.alignment", "shimmer_live.keypoints", "shimmer_live.device_config", "shimmer_live.bt",
            "shimmer_live.plugins.api", "shimmer_live.plugins.registry", "shimmer_live.plugins.host",
-           "shimmer_live.plugins.builtin.hrv"]
-UI_MODULES = ["shimmer_live.ui.common", "shimmer_live.ui.branding", "shimmer_live.ui.guide", "shimmer_live.ui.dialogs", "shimmer_live.ui.icons",
+           "shimmer_live.plugins.builtin.hrv", "shimmer_live.base", "shimmer_live.dock_setup"]
+UI_MODULES = ["shimmer_live.ui.common", "shimmer_live.ui.branding", "shimmer_live.ui.base_panel", "shimmer_live.ui.guide", "shimmer_live.ui.dialogs", "shimmer_live.ui.icons",
               "shimmer_live.ui.keypoints_editor", "shimmer_live.ui.plugins_page",
               "shimmer_live.ui.device_settings", "shimmer_live.ui.devices_page", "shimmer_live.ui.live_page",
               "shimmer_live.ui.main_window", "shimmer_live.__main__"]
@@ -36,6 +36,7 @@ def test_windows_backend_uses_existing_winrt_api():
     assert callable(DeviceInformation.find_all_async) and callable(DeviceInformation.create_from_id_async)
     assert callable(BluetoothDevice.get_device_selector_from_pairing_state)
     assert callable(BluetoothDevice.from_id_async) and callable(BluetoothAdapter.get_default_async)
+    assert callable(BluetoothDevice.from_bluetooth_address_async)     # docked setup: open a device by address
     for kind in ("CONFIRM_ONLY", "PROVIDE_PIN", "CONFIRM_PIN_MATCH", "DISPLAY_PIN"):
         assert hasattr(DevicePairingKinds, kind)
     assert hasattr(DevicePairingResultStatus, "PAIRED") and hasattr(DevicePairingResultStatus, "ALREADY_PAIRED")

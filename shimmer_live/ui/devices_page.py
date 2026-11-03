@@ -17,6 +17,7 @@ from .common import CRITICAL, FONT_M, GOOD, MUTED, WARNING, Banner, divider, run
 from .device_settings import DeviceSettingsDialog
 from .dialogs import PinDialog
 from .guide import GUIDE_HTML
+from .base_panel import BasePanel
 from .branding import BrandHeader
 from .keypoints_editor import KeypointsEditor
 
@@ -142,7 +143,7 @@ class DevicesPage(QWidget):
         lv.addWidget(g1, 3)
 
         # discovery
-        g2 = QGroupBox("Add a new Shimmer")
+        g2 = QGroupBox("Add a new Shimmer by Bluetooth scan")
         g2v = QVBoxLayout(g2)
         hint = QLabel("Switch the Shimmer on (blue LED blinking briefly every 2 s), keep it within 1–2 m, then scan. "
                       "See the Guide tab if it does not show up.")
@@ -181,6 +182,11 @@ class DevicesPage(QWidget):
 
         # ---------------- right: guide + log ----------------
         tabs = QTabWidget()
+        self.add_tabs = tabs
+        self.base_panel = BasePanel(cfg, backend, self._pin_provider)
+        self.base_panel.docked_changed.connect(self._docked_changed)
+        self.base_panel.setup_finished.connect(self.refresh)
+        tabs.addTab(self.base_panel, "Docked in base")
         guide = QTextBrowser()
         guide.setOpenExternalLinks(True)
         guide.setHtml(GUIDE_HTML)
@@ -191,6 +197,7 @@ class DevicesPage(QWidget):
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(2000)
         tabs.addTab(self.log_view, "Log")
+        tabs.setCurrentIndex(1)                      # Guide, until a base shows up
         logging.getLogger("shimmerlive").addHandler(QtLogHandler(self.log_view))
         split.addWidget(tabs)
         split.setStretchFactor(0, 3)
@@ -221,6 +228,7 @@ class DevicesPage(QWidget):
             self.adapter_label.setStyleSheet(f"color: {GOOD if ok else CRITICAL}; font-weight: 700; font-size: {FONT_M}pt;")
             self.btn_power.setVisible(not ok)
             self.paired = paired
+            self.base_panel.set_paired(d.address for d in paired)
             self._render_all()
 
         def fail(e):
@@ -471,6 +479,23 @@ class DevicesPage(QWidget):
             QMessageBox.warning(self, "Pairing failed", f"{dev.name}: {msg}\n\n{hint}".strip())
 
         run_bg(work, paired, failed, f"pair-{dev.name}")
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self.base_panel.start()              # watch USB for a base only while this page is visible
+
+    def hideEvent(self, ev):
+        self.base_panel.stop()
+        super().hideEvent(ev)
+
+    def _docked_changed(self, n):
+        if n < 0:
+            self.add_tabs.setTabText(0, "Docked in base")
+            return
+        self.add_tabs.setTabText(0, f"Docked in base ({n})")
+        if n > 0 and not getattr(self, "_base_seen", False):
+            self._base_seen = True                       # first time a base shows up: bring it to the front
+            self.add_tabs.setCurrentIndex(0)
 
     def _go_live(self):
         devs = self.checked_devices()
