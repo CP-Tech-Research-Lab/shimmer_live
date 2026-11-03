@@ -2,6 +2,7 @@
 import datetime as dt
 import logging
 
+import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
@@ -38,6 +39,17 @@ def display_unit(unit):
 
 def plugin_key(binding, output) -> str:
     return f"plugin:{binding.cls.id}:{output.key}"
+
+
+def sticky_range(cur, lo, hi, pad_frac=0.08):
+    """Y range for data spanning lo..hi, or None to keep cur. Grows at once to fit new data,
+    shrinks only when the data uses less than half of it, so the axis is not redrawn every frame."""
+    span = hi - lo
+    pad = span * pad_frac if span > 0 else max(abs(hi) * 0.01, 1e-6)
+    want = (lo - pad, hi + pad)
+    if cur is None or lo < cur[0] or hi > cur[1] or (want[1] - want[0]) < 0.5 * (cur[1] - cur[0]):
+        return want
+    return None
 
 
 pg.setConfigOptions(antialias=True, background=SURFACE, foreground=MUTED)
@@ -534,7 +546,6 @@ class LivePage(QWidget):
         for m in self.marks:
             m[3].clear()
         self._plots = []
-        first = None
         for row, (kind, s, b, i, spec) in enumerate(entries):
             p = self.glw.addPlot(row=row, col=0)
             # No background grid: its semi-transparent full-area lines were ~2/3 of the
@@ -542,15 +553,18 @@ class LivePage(QWidget):
             p.setLabel("left", display_unit(spec.unit), **{"font-size": f"{FONT_S}pt"})
             for side in ("left", "bottom"):
                 p.getAxis(side).setTickFont(QFont(QApplication.font().family(), int(round(FONT_XS))))
+                # Auto SI prefix re-renders the axis label (HTML) on every range change: 20k+/15 s.
+                p.getAxis(side).enableAutoSIPrefix(False)
             p.setMouseEnabled(x=False, y=True)
-            p.enableAutoRange(axis="y")
-            p.setAutoVisible(y=True)
+            # Y range is set by _update_plots (sticky_range). pyqtgraph's auto range ran during
+            # painting, changed the range and so painted every frame twice.
+            p.disableAutoRange()
+            # All plots share the time window: only the bottom one shows the time axis.
+            p.hideAxis("bottom")
             p.setMenuEnabled(False)
             p.hideButtons()
-            if first is None:
-                first = p
-            else:
-                p.setXLink(first)
+            # Plots are not X-linked: _update_plots sets every plot to the same window directly.
+            # Linking made each scroll propagate to all other plots (n² range updates per frame).
             # Keep width 1: Qt strokes wider pens on dense signals ~30x slower (900 vs 29 ms/frame).
             if kind == "plugin" and spec.style == "points":
                 curve = p.plot(pen=pg.mkPen(s.color, width=1), symbol="o", symbolSize=7,
@@ -569,11 +583,14 @@ class LivePage(QWidget):
             value.setParentItem(p)
             value.anchor(itemPos=(1, 0), parentPos=(1, 0), offset=(-8, 0))
             entry = {"kind": kind, "session": s, "binding": b, "index": i, "spec": spec, "plot": p,
-                     "curve": curve, "value": value}
+                     "curve": curve, "value": value, "yr": None, "manual_y": False}
+            # Zoomed with the mouse wheel: leave that plot's y range to the user.
+            p.vb.sigRangeChangedManually.connect(lambda *_, e=entry: e.__setitem__("manual_y", True))
             self._plots.append(entry)
             for m in self.marks:
                 self._add_mark_line(m, p, label=(row == 0))
         if self._plots:
+            self._plots[-1]["plot"].showAxis("bottom")
             self._plots[-1]["plot"].setLabel("bottom", "time since live view opened (s)", **{"font-size": f"{FONT_S}pt"})
         self.glw.setMinimumHeight(PLOT_ROW_PX * max(1, len(self._plots)))
         self.placeholder.setVisible(not self._plots)
@@ -592,12 +609,21 @@ class LivePage(QWidget):
                     m = t >= x0 - 1.0
                     snaps[s.mac] = (t[m], y[:, m])
                 t, y = snaps[s.mac]
-                e["curve"].setData(t, y[e["index"]], connect="finite")
+                y = y[e["index"]]
+                e["curve"].setData(t, y, connect="finite")
             else:
                 t, y = e["binding"].rings[e["index"]].snapshot()
                 m = t >= x0 - 30.0              # beat series are sparse: keep the previous points
-                e["curve"].setData(t[m], y[0, m])
+                t, y = t[m], y[0, m]
+                e["curve"].setData(t, y)
             e["plot"].setXRange(x0, now, padding=0)
+            if not e["manual_y"]:
+                v = y[(t >= x0) & np.isfinite(y)]
+                if v.size:
+                    r = sticky_range(e["yr"], float(v.min()), float(v.max()))
+                    if r is not None:
+                        e["yr"] = r
+                        e["plot"].setYRange(*r, padding=0)
         self._prune_marks(now)
 
     # ---------------- status, alerts ----------------
