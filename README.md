@@ -11,12 +11,12 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
 
 ## Using it
 
-1. **Start page (Devices).** It lists the paired devices. Tick the ones you want to use.
-   - *Test connection* reads each device's firmware, sampling rate, sensors and battery.
-   - *Forget* removes a pairing.
+1. **Start page (Devices).** Status pills at the top show whether Bluetooth is on and whether a Shimmer Base is connected. **Your Shimmers** lists every Shimmer once, whether it is paired with this computer, docked in the base, or both, with its base slot, pairing state and last test. Tick the ones to stream. Every button explains itself when you hover over it.
+   - *Test connection* reads each Shimmer's firmware, sampling rate, sensors and battery.
+   - *Forget pairing* removes this computer's pairing (docked Shimmers can be set up again with one click).
    - *⚙ Settings* connects to the device and shows its firmware, battery and configuration. From there you can change the sampling rate (a preset, or any value typed from 1 to 2048 Hz; the dialog shows the exact rate the device will use, since it divides a 32768 Hz clock by a whole number, e.g. 300 Hz → 32768 ÷ 109 = 300.62 Hz) with an estimate of the Bluetooth load, enabled sensors, ECG/ExG gains, GSR range and device name, and set the device clock to the PC's time. Changes are written to the Shimmer and read back to verify them.
-   - **Docked in base** (fastest way to set up Shimmers): when a Shimmer Base or Dock is connected by USB, the app notices it and shows which Shimmer is in which slot, read over USB (address and firmware). *Set up docked Shimmers* then, for every docked Shimmer, pairs it by address (PIN 1234 entered automatically; you're asked only if it's refused), tests the connection and sets its clock, and shows "ready" or the problem in plain words. Logging-only firmware (SDLog) is flagged, since it can't stream. A pairing that exists but no longer works is replaced automatically. On a Base6U with 6 Shimmers: reading the slots takes ~15 s, setup ~7–10 s per Shimmer.
-   - *Scan for devices* finds new Shimmers that aren't in a base. *Pair* pairs one, retrying up to 3 times. If the device asks for a PIN, a pop-up appears; the PIN is **1234**. After pairing, the device is tested automatically.
+   - **Shimmers in a base** (fastest way to set them up): when a Shimmer Base or Dock is connected by USB, the app notices it and shows each docked Shimmer in the list with its slot, read over USB (address and firmware). *Set up docked Shimmers* then, for every docked Shimmer, pairs it by address (PIN 1234 entered automatically; you're asked only if it's refused), tests the connection and sets its clock, and shows "ready" or the problem in plain words. Logging-only firmware (SDLog) is flagged, since it can't stream. A pairing that exists but no longer works is replaced automatically. On a Base6U with 6 Shimmers: reading the slots takes ~15 s, setup ~7–10 s per Shimmer.
+   - *Scan for Shimmers* finds Shimmers that aren't in a base. *Pair* pairs one, retrying up to 3 times; the PIN 1234 is entered automatically, and a pop-up asks you only if it is refused. After pairing, the device is tested automatically.
    - Tabs on the right:
      - *Guide:* how to connect a Shimmer, what the LEDs mean, and what to do when a device doesn't respond.
      - *Keypoints:* the 7 predefined keypoints (rest, experiment and task start/end, discard) plus your own, each with a colour.

@@ -74,3 +74,25 @@ def test_pages_build(qapp, tmp_path):
     assert any(e.cls.id == "hrv" for e in plugins.entries)
     for w in (devices, live, plugins):
         w.deleteLater()
+
+
+def test_every_button_explains_itself(qapp, tmp_path):
+    """Hovering any button must show what it does."""
+    from PySide6.QtWidgets import QAbstractButton, QPushButton, QRadioButton, QToolButton
+    from shimmer_live.config import Config
+    from shimmer_live.ui.devices_page import DevicesPage
+    from shimmer_live.ui.live_page import LivePage
+    from shimmer_live.ui.plugins_page import PluginsPage
+    cfg = Config(tmp_path / "cfg.json")
+    pages = [DevicesPage(cfg, None, "no Bluetooth in test"), LivePage(cfg), PluginsPage(cfg)]
+    missing, checked = [], 0
+    for page in pages:
+        for b in page.findChildren(QAbstractButton):
+            if isinstance(b, (QPushButton, QRadioButton, QToolButton)) and b.text():
+                checked += 1
+                if not b.toolTip().strip():
+                    missing.append(f"{type(page).__name__}: {b.text()!r}")
+    for page in pages:
+        page.deleteLater()
+    assert checked >= 15, f"only {checked} buttons found: the test is not looking at the real pages"
+    assert not missing, "buttons without a hover hint: " + ", ".join(missing)

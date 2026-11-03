@@ -13,11 +13,12 @@ GUIDE_HTML = f"""
 <h3>Fastest: set up Shimmers from the base</h3>
 <ol>
 <li>Put the Shimmers in a <b>Shimmer Base</b> (or Dock) connected to this computer by USB and switch them on.</li>
-<li>The <b>Docked in base</b> tab opens by itself and shows which Shimmer is in which slot, read over USB.</li>
+<li>They appear in <b>Your Shimmers</b> with their slot (<i>base slot 1, 2, …</i>), read over USB; the status
+    bar at the top shows the base.</li>
 <li>Press <b>Set up docked Shimmers</b>. For each one the app pairs it (entering the PIN 1234 for you), tests the
     connection and sets its clock, then shows <i>ready</i> or what is wrong in plain words. Shimmers with
     logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
-<li>Ready Shimmers are added to the paired list, ticked: press <b>Show live data</b>.</li>
+<li>Ready Shimmers are ticked in <b>Your Shimmers</b>: press <b>Show live data</b>.</li>
 </ol>
 <p>A Shimmer that is <i>paired but will not connect</i> (e.g. it was paired with another computer since) is fixed
 automatically: its old pairing is removed and it is paired again.</p>
@@ -29,11 +30,11 @@ automatically: its old pairing is removed and it is paired again.</p>
     A <b>solid blue</b> LED means it is <i>already connected</i> to another program or computer &mdash; close that first
     (a Shimmer accepts only one Bluetooth connection).</li>
 <li><b>Bring it close</b> (1&ndash;2 m, line of sight) for pairing.</li>
-<li>Click <b>Scan for devices</b>. It appears as <b>Shimmer3-XXXX</b>, where XXXX are the last 4 characters of the
+<li>Click <b>Scan for Shimmers</b>. It appears as <b>Shimmer3-XXXX</b>, where XXXX are the last 4 characters of the
     Bluetooth address printed on the Shimmer label.</li>
 <li>Click <b>Pair</b>. If a PIN is requested, the PIN is <b>1234</b>. Newer radios pair without a PIN.</li>
 <li>After pairing the app automatically <b>tests</b> the device (firmware, sampling rate, sensors, battery).
-    The result is shown in the paired list.</li>
+    The result is shown in <b>Your Shimmers</b>.</li>
 <li>Tick the devices you want and press <b>Show live data</b>.</li>
 </ol>
 
