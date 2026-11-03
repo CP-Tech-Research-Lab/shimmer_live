@@ -32,8 +32,8 @@ COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Status", ""]
 TIPS = {
     "refresh": "Read again which Shimmers are paired with this computer and, if a base is connected, which are "
                "docked in it.",
-    "setup": "For every Shimmer in the base: pair it over Bluetooth (the PIN 1234 is entered for you), test the "
-             "connection and set its clock. Progress and results appear in the Status column.",
+    "setup": "For every ticked Shimmer in the base: pair it over Bluetooth (the PIN 1234 is entered for you), test "
+             "the connection and set its clock. Progress and results appear in the Status column.",
     "test": "Briefly connect to the ticked (or highlighted) Shimmers and read their firmware, sampling rate, sensors "
             "and battery. Nothing is changed on the Shimmer.",
     "forget": "Remove this computer's Bluetooth pairing with the ticked (or highlighted) Shimmers. Docked Shimmers "
@@ -184,7 +184,7 @@ class DevicesPage(QWidget):
         acts = QHBoxLayout()
         acts.setSpacing(8)
         self.btn_setup = _button("Set up docked Shimmers", TIPS["setup"])
-        self.btn_setup.clicked.connect(self.base.setup_all)
+        self.btn_setup.clicked.connect(self._setup_ticked)
         self.btn_test = _button("Test connection", TIPS["test"])
         self.btn_test.clicked.connect(self._test_selected)
         self.btn_forget = _button("Forget pairing", TIPS["forget"])
@@ -325,7 +325,7 @@ class DevicesPage(QWidget):
             return f"⚠ {r.firmware} firmware: cannot stream over Bluetooth (install LogAndStream with Consensys)", \
                 CRITICAL
         if not r.paired:
-            return "not paired yet: press 'Set up docked Shimmers'", MUTED
+            return "not paired yet: tick it, then press 'Set up docked Shimmers'", MUTED
         return describe_check(self.cfg.device(r.mac).get("last_check"))
 
     def _render_all(self):
@@ -338,7 +338,6 @@ class DevicesPage(QWidget):
             n = sum(s.occupied for s in self.base.slots) if self.base.slots else sum(self.base.occupancy or [])
             self.pill_base.set(f"{dev.label} · {n} docked" + (" · setting up…" if self.base.setting_up else ""), "good")
         self.btn_setup.setVisible(dev is not None)
-        self.btn_setup.setEnabled(self.backend is not None and not self.base.busy and bool(self.base.slots))
         self.rows = self._build_rows()
         if not self.rows:
             self.empty.setText("Looking for Shimmers in a base…" if self.base.state == "checking" or self.base.reading
@@ -356,14 +355,18 @@ class DevicesPage(QWidget):
         t.blockSignals(True)
         t.setRowCount(len(self.rows))
         for i, r in enumerate(self.rows):
-            usable = r.paired and r.can_stream and bool(r.mac)
+            # paired: tick to stream it; docked but not paired yet: tick to include it in the setup
+            usable = bool(r.mac) and r.can_stream and (r.paired or bool(r.slot))
             chk = QTableWidgetItem()
             chk.setFlags((Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable) if usable
                          else Qt.ItemIsSelectable)
             chk.setCheckState(Qt.Checked if usable and r.mac in selected else Qt.Unchecked)
             chk.setData(Qt.UserRole, r.mac)
-            chk.setToolTip("Tick to stream it in live view" if usable else
-                           "Pair it first (Set up docked Shimmers)" if r.can_stream else "Its firmware cannot stream")
+            chk.setToolTip("Tick to stream it in live view" + (" (and to include it in 'Set up docked "
+                                                                 "Shimmers')" if r.slot else "")
+                           if r.paired else
+                           "Tick to pair it with 'Set up docked Shimmers'" if usable else
+                           "Its firmware cannot stream" if r.mac else "Still reading it over USB")
             t.setItem(i, 0, chk)
             name = QTableWidgetItem(r.name)
             name.setToolTip(f"{r.name}\nBluetooth address {r.mac}" + (f"\nfirmware {r.firmware}" if r.firmware else ""))
@@ -414,13 +417,22 @@ class DevicesPage(QWidget):
         q = "strong" if rssi > -65 else "ok" if rssi > -80 else "weak – move closer"
         return f"{rssi} dBm ({q})"
 
+    def _checked_rows(self):
+        return [r for i, r in enumerate(self.rows)
+                if i < self.table.rowCount() and self.table.item(i, 0) is not None
+                and self.table.item(i, 0).checkState() == Qt.Checked]
+
     def checked_devices(self):
-        out = []
-        for i in range(self.table.rowCount()):
-            it = self.table.item(i, 0)
-            if it is not None and it.checkState() == Qt.Checked:
-                out.append((it.data(Qt.UserRole), self.table.item(i, 1).text()))
-        return out
+        """Ticked Shimmers that are paired (ticked unpaired ones are only waiting for the docked setup)."""
+        return [(r.mac, r.name) for r in self._checked_rows() if r.paired]
+
+    def _checked_slots(self):
+        return [r.slot for r in self._checked_rows() if r.slot]
+
+    def _setup_ticked(self):
+        slots = self._checked_slots()
+        if slots:
+            self.base.setup_all(slots)
 
     def _target_devices(self):
         """Ticked Shimmers, or the highlighted paired ones if nothing is ticked."""
@@ -432,7 +444,7 @@ class DevicesPage(QWidget):
 
     def _on_check_changed(self, item):
         if item.column() == 0:
-            self.cfg.data["selected"] = [m for m, _ in self.checked_devices()]
+            self.cfg.data["selected"] = [r.mac for r in self._checked_rows()]
             self.cfg.save()
             self._update_buttons()
 
@@ -441,6 +453,9 @@ class DevicesPage(QWidget):
         busy = any(m in self.busy for m, _ in sel) or self.base.setting_up
         self.btn_live.setEnabled(bool(sel) and not busy and not self.live_blocked)
         self.btn_live.setText(f"Show live data ({len(sel)})  ▶" if sel else "Show live data  ▶")
+        slots = self._checked_slots()
+        self.btn_setup.setText(f"Set up docked Shimmers ({len(slots)})" if slots else "Set up docked Shimmers")
+        self.btn_setup.setEnabled(self.backend is not None and not self.base.busy and bool(slots))
 
     def set_live_blocked(self, blocked: bool, why: str = ""):
         self.live_blocked = blocked

@@ -132,10 +132,11 @@ class BaseWatcher(QObject):
         self.changed.emit()
 
     # ---------------- one-click setup ----------------
-    def setup_all(self):
+    def setup_all(self, slots=None):
+        """Set up the Shimmers in the given slots (all occupied slots if None)."""
         if self.link is None or self.busy or not self.backend:
             return
-        targets = [s for s in self.slots if s.occupied]
+        targets = [s for s in self.slots if s.occupied and (slots is None or s.slot in slots)]
         if not targets:
             return
         self.busy = self.setting_up = True

@@ -15,7 +15,7 @@ GUIDE_HTML = f"""
 <li>Put the Shimmers in a <b>Shimmer Base</b> (or Dock) connected to this computer by USB and switch them on.</li>
 <li>They appear in <b>Your Shimmers</b> with their slot (<i>base slot 1, 2, …</i>), read over USB; the status
     bar at the top shows the base.</li>
-<li>Press <b>Set up docked Shimmers</b>. For each one the app pairs it (entering the PIN 1234 for you), tests the
+<li>Tick the ones you want and press <b>Set up docked Shimmers</b>. For each ticked one the app pairs it (entering the PIN 1234 for you), tests the
     connection and sets its clock, then shows <i>ready</i> or what is wrong in plain words. Shimmers with
     logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
 <li>Ready Shimmers are ticked in <b>Your Shimmers</b>: press <b>Show live data</b>.</li>
