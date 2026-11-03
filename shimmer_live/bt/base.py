@@ -69,3 +69,15 @@ class BluetoothBackend:
 
     def forget(self, device: BtDevice) -> None:
         raise NotImplementedError
+
+    def find(self, addresses, timeout: float = 20.0) -> dict:
+        """Locate specific devices by address (e.g. read from a dock): {address: BtDevice}.
+
+        Default: paired list plus one scan. Backends override this with something faster."""
+        want = {a.upper() for a in addresses}
+        found = {d.address: d for d in self.list_paired() if d.address in want}
+        if want - set(found):
+            for d in self.discover(min(timeout, 15.0), lambda _: None):
+                if d.address in want:
+                    found.setdefault(d.address, d)
+        return found

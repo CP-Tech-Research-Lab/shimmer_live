@@ -224,6 +224,39 @@ class BluezBackend(BluetoothBackend):
                 pass
         return list(seen.values())
 
+    def find(self, addresses, timeout=20.0):
+        """Targeted scan: stop as soon as every requested address has been seen."""
+        return self._run(self._find({a.upper() for a in addresses}, timeout), timeout + 15)
+
+    async def _find(self, want, timeout):
+        found = {d.address: d for d in await self._devices() if d.address in want and d.paired}
+        if not want - set(found):
+            return found
+        try:
+            await self._call(self.adapter, ADAPTER, "SetDiscoveryFilter", "a{sv}",
+                             [{"Transport": Variant("s", "bredr")}])
+        except BluezError:
+            pass
+        try:
+            await self._call(self.adapter, ADAPTER, "StartDiscovery")
+        except BluezError as e:
+            if "InProgress" not in e.name:
+                raise
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout
+        try:
+            while loop.time() < end and want - set(found):
+                for d in await self._devices():
+                    if d.address in want and (d.rssi is not None or d.paired):
+                        found[d.address] = d
+                await asyncio.sleep(0.25)
+        finally:
+            try:
+                await self._call(self.adapter, ADAPTER, "StopDiscovery")
+            except BluezError:
+                pass
+        return found
+
     def pair(self, device, pin_provider):
         if not self._pair_lock.acquire(blocking=False):
             raise PairingError("Another pairing is in progress.", "Wait for it to finish.", retryable=True)
@@ -245,18 +278,42 @@ class BluezBackend(BluetoothBackend):
                              [AGENT_PATH, "KeyboardDisplay"])
             self._agent_registered = True
         dev = next((d for d in await self._devices() if d.address == address.upper()), None)
+        scanning = False
         if dev is None:
-            raise PairingError("The device is not visible to BlueZ.", "Scan again, then pair.")
+            # BlueZ keeps an unpaired device only while it is being discovered: scan for this
+            # address and pair while the scan is still running, so the record cannot vanish.
+            try:
+                await self._call(self.adapter, ADAPTER, "StartDiscovery")
+                scanning = True
+            except BluezError as e:
+                scanning = "InProgress" in e.name
+            loop = asyncio.get_running_loop()
+            end = loop.time() + 20
+            while dev is None and loop.time() < end:
+                await asyncio.sleep(0.25)
+                dev = next((d for d in await self._devices() if d.address == address.upper()), None)
+            if dev is None:
+                await self._stop_discovery(scanning)
+                raise PairingError("The device is not visible over Bluetooth.", NOT_RESPONDING_HINT, retryable=True)
         try:
             await asyncio.wait_for(self._call(dev.platform_id, DEVICE, "Pair"), 100)
         except BluezError as e:
             if not e.name.endswith("AlreadyExists"):
                 raise
+        finally:
+            await self._stop_discovery(scanning)
         await self._call(dev.platform_id, PROPS, "Set", "ssv", [DEVICE, "Trusted", Variant("b", True)])
         try:
             await self._call(dev.platform_id, DEVICE, "Disconnect")
         except BluezError:
             pass
+
+    async def _stop_discovery(self, scanning):
+        if scanning:
+            try:
+                await self._call(self.adapter, ADAPTER, "StopDiscovery")
+            except BluezError:
+                pass
 
     def forget(self, device):
         path = device.platform_id

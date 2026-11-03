@@ -101,6 +101,25 @@ class WindowsBackend(BluetoothBackend):
         on_update(found)
         return found
 
+    def find(self, addresses, timeout=20.0):
+        """Open each device straight from its address: no inquiry scan needed on Windows."""
+        return self._run(self._find([a.upper() for a in addresses]), timeout + 15)
+
+    async def _find(self, addresses):
+        found = {}
+        for addr in addresses:
+            try:
+                bt = await BluetoothDevice.from_bluetooth_address_async(int(addr.replace(":", ""), 16))
+            except Exception as e:                          # noqa: BLE001 - reported as "not found"
+                log.info("%s not reachable by address: %s", addr, e)
+                continue
+            if bt is None:
+                continue
+            info = bt.device_information
+            found[addr] = BtDevice(address=addr, name=info.name or bt.name, paired=info.pairing.is_paired,
+                                   platform_id=info.id)
+        return found
+
     def pair(self, device, pin_provider):
         try:
             self._run(self._pair(device, pin_provider), 150)
