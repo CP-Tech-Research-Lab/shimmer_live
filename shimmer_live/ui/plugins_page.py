@@ -22,6 +22,7 @@ class PluginsPage(QWidget):
 
         bar = QHBoxLayout()
         b = QPushButton("◀  Devices")
+        b.setToolTip("Back to the device list")
         b.clicked.connect(self.back.emit)
         bar.addWidget(b)
         bar.addSpacing(8)
@@ -32,6 +33,7 @@ class PluginsPage(QWidget):
         b.clicked.connect(lambda: open_folder(registry.user_plugins_dir()))
         bar.addWidget(b)
         b = QPushButton("Reload")
+        b.setToolTip("Look for new or changed plugin files in the plugins folder")
         b.clicked.connect(self.reload)
         bar.addWidget(b)
         root.addLayout(bar)

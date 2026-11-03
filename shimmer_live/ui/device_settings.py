@@ -51,8 +51,11 @@ class DeviceSettingsDialog(QDialog):
         row.addWidget(self.btn_clock)
         row.addStretch(1)
         self.btn_apply = set_role(QPushButton("Apply changes"), "primary")
+        self.btn_apply.setToolTip("Write the changed settings to the Shimmer and read them back to check them. "
+                                  "You see a summary and confirm first.")
         self.btn_apply.clicked.connect(self._apply)
         self.btn_close = QPushButton("Close")
+        self.btn_close.setToolTip("Close without writing anything that was not applied")
         self.btn_close.clicked.connect(self.accept)
         row.addWidget(self.btn_apply)
         row.addWidget(self.btn_close)

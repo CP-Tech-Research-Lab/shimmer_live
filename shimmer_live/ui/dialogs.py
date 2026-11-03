@@ -223,13 +223,17 @@ class SaveRecordingDialog(QDialog):
 
         btns = QHBoxLayout()
         self.btn_discard = QPushButton("Discard recording…")
+        self.btn_discard.setToolTip("Delete this recording permanently (you are asked to confirm)")
         self.btn_discard.clicked.connect(self._discard)
         btns.addWidget(self.btn_discard)
         btns.addStretch(1)
         self.btn_folder = QPushButton("Open folder")
+        self.btn_folder.setToolTip("Open the folder where recordings are saved")
         self.btn_folder.clicked.connect(lambda: open_folder(self.folder.parent))
         btns.addWidget(self.btn_folder)
         self.btn_save = set_role(QPushButton("Save recording"), "primary")
+        self.btn_save.setToolTip("Write the recording as one .zip file (CSV per Shimmer, keypoints, quality checks, "
+                                 "notes), named with its start time and the name above")
         self.btn_save.setDefault(True)
         self.btn_save.clicked.connect(self._save)
         btns.addWidget(self.btn_save)

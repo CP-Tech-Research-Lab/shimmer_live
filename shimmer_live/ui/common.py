@@ -188,6 +188,7 @@ class Banner(QFrame):
         self._sev = self._text = None
         if action:
             self.btn = QPushButton(action[0])
+            self.btn.setToolTip(action[2] if len(action) > 2 else action[0])
             self.btn.clicked.connect(action[1])
             lay.addWidget(self.btn)
         self.update_content(severity, text)
@@ -295,3 +296,54 @@ class FlowLayout(QLayout):
             x += hint.width() + self._spacing
             row_h = max(row_h, hint.height())
         return y + row_h - rect.y()
+
+
+class Card(QFrame):
+    """A white, rounded panel with a title, an optional one-line explanation and its own content.
+
+    Use .body (a QVBoxLayout) for the content and .actions (a QHBoxLayout in the title row,
+    right-aligned) for header buttons."""
+
+    def __init__(self, title: str, subtitle: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("card")
+        self.setStyleSheet("QFrame#card { background: #ffffff; border: 1px solid #dcdcd8; border-radius: 10px; }")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 12, 16, 14)
+        outer.setSpacing(8)
+        head = QHBoxLayout()
+        text = QVBoxLayout()
+        text.setSpacing(0)
+        self.title = QLabel(title)
+        self.title.setStyleSheet(f"font-size: {FONT_M}pt; font-weight: 700; border: none;")
+        text.addWidget(self.title)
+        self.subtitle = QLabel(subtitle)
+        self.subtitle.setWordWrap(True)
+        self.subtitle.setStyleSheet(f"font-size: {FONT_S}pt; color: {MUTED}; border: none;")
+        self.subtitle.setVisible(bool(subtitle))
+        text.addWidget(self.subtitle)
+        head.addLayout(text, 1)
+        self.actions = QHBoxLayout()
+        self.actions.setSpacing(8)
+        head.addLayout(self.actions)
+        outer.addLayout(head)
+        self.body = QVBoxLayout()
+        self.body.setSpacing(8)
+        outer.addLayout(self.body, 1)
+
+
+class StatusPill(QLabel):
+    """Rounded status chip: ● text, coloured by state (good / bad / neutral)."""
+
+    COLORS = {"good": (GOOD, "#e7f4ec"), "bad": (CRITICAL, CRITICAL_BG), "warn": (WARNING, WARNING_BG),
+              "neutral": (MUTED, "#f1f1ee")}
+
+    def __init__(self, text="", state="neutral"):
+        super().__init__()
+        self.set(text, state)
+
+    def set(self, text, state="neutral"):
+        fg, bg = self.COLORS[state]
+        self.setText(f"<span style='color:{fg}'>●</span>&nbsp; {text}")
+        self.setStyleSheet(f"QLabel {{ background: {bg}; color: {INK}; border: 1px solid {fg}; border-radius: 14px;"
+                           f" padding: 5px 14px; font-weight: 600; }}")

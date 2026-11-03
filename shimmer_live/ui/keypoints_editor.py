@@ -36,6 +36,7 @@ class KeypointsEditor(QWidget):
         self.new_name.setMaxLength(40)
         self.new_name.returnPressed.connect(self._add)
         b = QPushButton("Add keypoint")
+        b.setToolTip("Add a keypoint with the name typed on the left; it gets its own colour and button in live view")
         b.clicked.connect(self._add)
         row.addWidget(self.new_name, 1)
         row.addWidget(b)
@@ -70,6 +71,7 @@ class KeypointsEditor(QWidget):
                 t.setCellWidget(r, 3, QLabel(""))
             else:
                 rm = set_role(QPushButton("Remove"), "small")
+                rm.setToolTip(f"Remove the keypoint '{k.name}' (recordings already made keep it)")
                 rm.clicked.connect(lambda _=False, i=r: self._remove(i))
                 t.setCellWidget(r, 3, rm)
 

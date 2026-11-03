@@ -14,7 +14,7 @@ from ..plugins.host import PluginHost
 from ..recorder import VALUES_CAL, VALUES_RAW, Recorder
 from ..session import ShimmerSession, State, stop_all
 from .common import (CRITICAL, DEVICE_COLORS, FONT_BASE, FONT_L, FONT_M, FONT_S, FONT_XS, FONT_XXL, GOOD, ICON_BTN,
-                     INK, MUTED, SURFACE, WARNING, AlertArea, FlowLayout, fmt_duration, run_bg, set_if_changed,
+                     INK, MUTED, SURFACE, WARNING, AlertArea, Card, FlowLayout, fmt_duration, run_bg, set_if_changed,
                      set_role)
 from .device_settings import DeviceInfoDialog
 from .dialogs import CalibrationDialog, SaveRecordingDialog, TimingInfoDialog
@@ -166,6 +166,7 @@ class LivePage(QWidget):
         # ---- toolbar ----
         bar = QHBoxLayout()
         self.btn_back = QPushButton("◀  Devices")
+        self.btn_back.setToolTip("Stop streaming, disconnect and go back to the device list")
         self.btn_back.clicked.connect(self._on_back)
         bar.addWidget(self.btn_back)
         bar.addSpacing(6)
@@ -194,9 +195,12 @@ class LivePage(QWidget):
         self.btn_folder.clicked.connect(self._choose_folder)
         bar.addWidget(self.btn_folder)
         self.btn_rec = QPushButton("●  Start recording")
+        self.btn_rec.setToolTip("Start saving the signals marked with the dot in the Signals panel. Keypoints can "
+                                "be marked while recording.")
         set_role(self.btn_rec, "record")
         self.btn_rec.clicked.connect(self.start_recording)
         self.btn_stop = set_role(QPushButton("■  Stop recording"), "stop")
+        self.btn_stop.setToolTip("Stop the recording: you then see the quality checks, add a name and notes, and save")
         self.btn_stop.clicked.connect(self.stop_recording)
         bar.addWidget(self.btn_rec)
         bar.addWidget(self.btn_stop)
@@ -215,9 +219,12 @@ class LivePage(QWidget):
         root.addLayout(rec_row)
 
         # ---- keypoints bar (wraps to a second row on narrow windows) ----
+        kp_card = Card("Keypoints", "While recording, press a button (or its number key 1–9) to mark this moment "
+                                    "on every Shimmer.")
         kp_holder = QWidget()
         self.kp_bar = FlowLayout(kp_holder, spacing=8)
-        root.addWidget(kp_holder)
+        kp_card.body.addWidget(kp_holder)
+        root.addWidget(kp_card)
         self.kp_buttons = []
         self._shortcuts = []
 
@@ -260,8 +267,11 @@ class LivePage(QWidget):
         self.left.setFixedWidth(PANEL_WIDTH)
         left_lay = QVBoxLayout(self.left)
         left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(10)
         left_lay.addWidget(self._values_box())
-        left_lay.addWidget(self.panel_scroll, 1)
+        sig_card = Card("Signals", "Eye: show in the plots · Dot: record. The dots lock while recording.")
+        sig_card.body.addWidget(self.panel_scroll, 1)
+        left_lay.addWidget(sig_card, 1)
         body.addWidget(self.left)
         plots_col = QVBoxLayout()
         self.glw = pg.GraphicsLayoutWidget()
@@ -368,22 +378,23 @@ class LivePage(QWidget):
 
     def _values_box(self):
         """Raw (default) or calibrated values in recordings; locked while recording."""
-        box = QFrame()
-        box.setObjectName("valuesBox")
-        box.setStyleSheet("QFrame#valuesBox { background: white; border: 1px solid #dcdcd8; border-radius: 8px; }")
-        v = QVBoxLayout(box)
-        v.setContentsMargins(12, 8, 12, 8)
+        box = Card("Values to record")
+        v = box.body
         v.setSpacing(4)
-        v.addWidget(set_role(QLabel("Values to record"), "section"))
         self.values_group = QButtonGroup(self)
         self.rb_raw = QRadioButton("Raw device values (default)")
+        self.rb_raw.setToolTip("Save every value exactly as the Shimmer sent it (columns ending in _RAW). The formulas "
+                               "to convert them are saved with the recording.")
         self.rb_cal = QRadioButton("Calibrated (mV, µS)")
+        self.rb_cal.setToolTip("Save values already converted to physical units (columns ending in _CAL), like a "
+                               "Consensys 'Calibrated' export")
         for i, rb in enumerate((self.rb_raw, self.rb_cal)):
             self.values_group.addButton(rb, i)
             v.addWidget(rb)
         (self.rb_cal if self.cfg.data.get("record_values") == VALUES_CAL else self.rb_raw).setChecked(True)
         self.values_group.idToggled.connect(self._values_changed)
         info = set_role(QPushButton("ⓘ How values are calibrated"), "small")
+        info.setToolTip("Show the formulas that convert raw values to mV and µS")
         info.clicked.connect(lambda: CalibrationDialog(self).exec())
         v.addWidget(info, 0, Qt.AlignLeft)
         return box
@@ -411,10 +422,6 @@ class LivePage(QWidget):
             if it.widget():
                 it.widget().deleteLater()
         self.rows = {}
-        hint = set_role(QLabel("Eye: show in live view · Dot: record.\nRecording choices lock when recording "
-                               "starts."), "muted")
-        hint.setWordWrap(True)
-        self.panel_lay.addWidget(hint)
         for s in self.sessions:
             title = QLabel(f"<span style='color:{s.color}'>●</span> {s.name}")
             title.setStyleSheet(f"padding-top: 12px; font-size: {FONT_M}pt; font-weight: 700;")
@@ -459,10 +466,6 @@ class LivePage(QWidget):
             sc.deleteLater()
         self._shortcuts = []
         self.keypoints = kpmod.load(self.cfg)
-        lab = set_role(QLabel("Keypoints"), "section")
-        lab.setAlignment(Qt.AlignVCenter)
-        lab.setMinimumHeight(44)
-        self.kp_bar.addWidget(lab)
         self.kp_buttons = []
         for i, k in enumerate(self.keypoints):
             b = set_role(QPushButton(f"{i + 1}   {k.name}" if i < 9 else k.name), "keypoint")
@@ -654,7 +657,7 @@ class LivePage(QWidget):
             if s.state == State.FAILED:
                 a[f"failed-{k}"] = ("critical", f"{s.name}: could not connect — {s.detail}. Check it is on "
                                                 f"(blue LED blinking), close by and not connected elsewhere.",
-                                    ("Retry", s.retry))
+                                    ("Retry", s.retry, "Try to connect to this Shimmer again"))
             elif s.state == State.CONNECTING:
                 a[f"conn-{k}"] = ("info", f"Connecting to {s.name}… {s.detail}", None)
             if s.state == State.STREAMING:
