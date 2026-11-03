@@ -124,7 +124,8 @@ class BaseLink:
             s.reset_input_buffer()
             s.write(cmd.encode("ascii"))
             buf, end = b"", time.monotonic() + timeout
-            want = {"SDV$": "V", "SDQ$": "Q"}.get(cmd, "P" if cmd.startswith("SDP") else "D")
+            want = {"SDV$": "V", "SDQ$": "Q"}.get(cmd, "P" if cmd.startswith("SDP") else
+                                                  "C" if cmd.startswith("SDC") else "D")
             while time.monotonic() < end:
                 buf += s.read(256)
                 while b"\r\n" in buf:
@@ -141,6 +142,15 @@ class BaseLink:
             return [True]                                   # single dock: assume docked; read tells
         line = self.command("SDQ$")
         return [c == "1" for c in line[2:]]
+
+    def select_sd(self, slot: int) -> None:
+        """Route the slot WITH its SD card: the card appears on this PC as a USB drive (~4 s).
+        The base answers C,NN (verified on a Base6U)."""
+        if not self.dev.control_port:
+            return
+        reply = self.command(f"SDC,{slot:02d}$", timeout=SLOT_CHANGE_TIMEOUT_S)
+        if reply != f"C,{slot:02d}":
+            raise IOError(f"base routed {reply!r} instead of slot {slot} with SD")
 
     def select(self, slot: int) -> None:
         if not self.dev.control_port:

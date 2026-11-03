@@ -228,6 +228,18 @@ def analyze(folder) -> Analysis:
     return a
 
 
+def _timestamp_doc(session: dict) -> dict:
+    shared = f"s, shared clock: {session['clocks']['shared_clock']['source']}"
+    if session.get("source") == "sd":
+        return {"Timestamp_Unix_CAL": "ms since 1970-01-01 UTC: the Shimmer's own clock, set to this PC's time at "
+                                      "the start, corrected by the offset measured at start and stop",
+                "Timestamp_Shared_CAL": shared + " (converted from the PC time above, not measured per sample)",
+                "Timestamp_CAL": "ms, Shimmer clock (32768 Hz crystal), counted from the Shimmer's power-on"}
+    return {"Timestamp_Unix_CAL": "ms since 1970-01-01 UTC, PC wall clock, sample time (latency removed)",
+            "Timestamp_Shared_CAL": shared,
+            "Timestamp_CAL": "ms, Shimmer clock (32768 Hz crystal), 0 = first sample of the live session"}
+
+
 def column_name(ch: dict, raw_mode: bool) -> str:
     """Consensys naming: <signal>_CAL for calibrated values, <signal>_RAW for raw device values."""
     name = ch["export_name"]
@@ -315,17 +327,21 @@ def write_zip(a: Analysis, name: str = "", notes: str = "", out_folder=None) -> 
             "summary": a.summary, "files": files + ["keypoints.csv", "qc.csv", "notes.txt"],
             "values": a.session.get("values", VALUES_CAL),
             "calibration": calibration_info(a),
-            "timestamps": {
-                "Timestamp_Unix_CAL": "ms since 1970-01-01 UTC, PC wall clock, sample time (latency removed)",
-                "Timestamp_Shared_CAL": f"s, shared clock: {a.session['clocks']['shared_clock']['source']}",
-                "Timestamp_CAL": "ms, Shimmer clock (32768 Hz crystal), 0 = first sample of the live session",
-            },
+            "timestamps": _timestamp_doc(a.session),
+            "sd_card": a.session.get("sd"),
             "devices": [{**{k: v for k, v in d.meta.items() if k != "file"}, "stats": d.stats} for d in a.devices],
             "plugins": [{k: v for k, v in p.meta.items() if k != "file"} for p in a.plugins],
             "keypoint_definitions": a.session.get("keypoint_definitions", []),
             "events": [{**e, "utc": clocks.utc_iso(e["unix_ns"])} for e in a.events],
             "clocks": a.session["clocks"],
         }
+        raw_dir = a.folder / "sd_raw"                   # SD recordings: the Shimmers' original files
+        if raw_dir.is_dir():
+            for f in sorted(raw_dir.rglob("*")):
+                if f.is_file():
+                    arc = "sd_raw/" + f.relative_to(raw_dir).as_posix()
+                    zf.write(f, arc)
+                    info["files"].append(arc)
         zf.writestr("info.json", json.dumps(info, indent=2))
         zf.writestr("notes.txt", notes or "")
     with zipfile.ZipFile(tmp) as zf:

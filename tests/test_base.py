@@ -29,6 +29,8 @@ class FakeBaseSerial:
             self.active, reply = None, "D"
         elif cmd.startswith("SDP,") and cmd.endswith("$") and 1 <= int(cmd[4:6]) <= len(self.occupied):
             self.active, reply = int(cmd[4:6]), f"P,{cmd[4:6]}"
+        elif cmd.startswith("SDC,") and cmd.endswith("$") and 1 <= int(cmd[4:6]) <= len(self.occupied):
+            self.active, reply = int(cmd[4:6]), f"C,{cmd[4:6]}"       # slot routed WITH its SD card
         else:
             reply = "E"
         self.out += reply.encode() + b"\r\n"
@@ -57,6 +59,9 @@ def test_base_commands(link):
     assert link.fake.active == 4 and link.fake.log[-1] == "SDP,04$"
     link.disconnect()
     assert link.fake.active is None
+    link.select_sd(2)
+    assert link.fake.active == 2 and link.fake.log[-1] == "SDC,02$"
+    link.disconnect()
     with pytest.raises(IOError):
         link.command("SDX$")                                  # the base answers E to unknown commands
 
