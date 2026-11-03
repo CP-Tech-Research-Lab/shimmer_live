@@ -1,7 +1,8 @@
 """Main window: devices page and live page in a stack."""
 import logging
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget
 
 from .. import export
@@ -42,6 +43,8 @@ class MainWindow(QMainWindow):
         self.live.back.connect(self._close_live)
         self.devices.refresh()
         QTimer.singleShot(500, self._recover_unsaved)
+        full = QShortcut(QKeySequence(Qt.Key_F11), self)
+        full.activated.connect(lambda: self.showMaximized() if self.isFullScreen() else self.showFullScreen())
 
     def _recover_unsaved(self):
         """Offer to save recordings left unsaved because the app closed while recording."""

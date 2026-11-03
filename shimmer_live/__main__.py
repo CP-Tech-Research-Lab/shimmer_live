@@ -32,7 +32,7 @@ def main():
     app.setStyleSheet(STYLESHEET)
     init_bridge()
     win = MainWindow(Config())
-    win.show()
+    win.showMaximized()                    # fills the screen; F11 toggles true full screen
     sys.exit(app.exec())
 
 
