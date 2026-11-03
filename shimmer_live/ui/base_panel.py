@@ -40,6 +40,14 @@ class BaseWatcher(QObject):
     def stop(self):
         self.timer.stop()
 
+    def rescan(self):
+        """Forget what is known about the base and look again from scratch (the Refresh button)."""
+        if self.setting_up:
+            return
+        self.state, self.slots, self.occupancy, self.results = "checking", [], None, {}
+        self.changed.emit()
+        self._poll()                  # if a read is already running, the next poll starts over
+
     def slot_of(self, mac):
         return next((s for s in self.slots if s.occupied and s.mac == mac), None)
 

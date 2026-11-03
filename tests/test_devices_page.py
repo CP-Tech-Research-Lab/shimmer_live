@@ -86,3 +86,19 @@ def test_setup_runs_only_on_ticked_docked_shimmers(page, monkeypatch):
     assert page.checked_devices() == []                              # not paired: not offered to live view
     page.btn_setup.click()
     assert started == [[2]]
+
+
+def test_refresh_starts_over_from_checking(page, monkeypatch):
+    page.cfg.data["devices"] = {"00:06:66:B9:86:84": {"name": "Shimmer3-8684"}}   # no Bluetooth in tests:
+    page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]           # paired list comes from here
+    page.base.state = "base"
+    page.base.slots = [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True)]
+    page.base.occupancy = [True]
+    page._render_all()
+    assert cells(page)["Shimmer3-8684"][0] == "base slot 1"
+    polled = []
+    monkeypatch.setattr(page.base, "_poll", lambda: polled.append(1))
+    page.btn_refresh.click()
+    assert polled and page.base.state == "checking" and page.base.occupancy is None
+    assert cells(page)["Shimmer3-8684"][0] == "checking…"
+    assert "looking for a Shimmer base" in page.pill_base.text()

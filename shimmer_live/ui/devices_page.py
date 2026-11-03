@@ -158,7 +158,7 @@ class DevicesPage(QWidget):
         card = Card("Your Shimmers", "Tick the ones to stream. Shimmers in the base show their slot; "
                                      "the ones not yet paired can be set up from the base with one click.")
         self.btn_refresh = _button("Refresh", TIPS["refresh"], "small")
-        self.btn_refresh.clicked.connect(self.refresh)
+        self.btn_refresh.clicked.connect(self._refresh_all)
         card.actions.addWidget(self.btn_refresh, 0, Qt.AlignTop)
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -264,9 +264,12 @@ class DevicesPage(QWidget):
         self._render_all()
 
     # ---------------- data ----------------
+    def _refresh_all(self):
+        """Refresh button: look for the base and read its slots again, and re-read the paired list."""
+        self.base.rescan()
+        self.refresh()
+
     def refresh(self):
-        if self.base.device is not None and not self.base.busy:
-            self.base.read_slots()
         if not self.backend:
             self.pill_bt.set("Bluetooth backend unavailable", "bad")
             self.paired = [BtDevice(mac, d.get("name", mac), True) for mac, d in self.cfg.data["devices"].items()]
@@ -337,7 +340,7 @@ class DevicesPage(QWidget):
         else:
             n = sum(s.occupied for s in self.base.slots) if self.base.slots else sum(self.base.occupancy or [])
             self.pill_base.set(f"{dev.label} · {n} docked" + (" · setting up…" if self.base.setting_up else ""), "good")
-        self.btn_setup.setVisible(dev is not None)
+        self.btn_setup.setVisible(dev is not None and self.base.state != "checking")
         self.rows = self._build_rows()
         if not self.rows:
             self.empty.setText("Looking for Shimmers in a base…" if self.base.state == "checking" or self.base.reading
