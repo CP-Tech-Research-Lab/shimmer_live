@@ -78,6 +78,7 @@ class Row:
     firmware: str = ""
     can_stream: bool = True
     docked_error: str = ""
+    reading: bool = False          # docked, Shimmer not read over USB yet
     device: BtDevice = None
 
 
@@ -175,6 +176,11 @@ class DevicesPage(QWidget):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.itemChanged.connect(self._on_check_changed)
         card.body.addWidget(self.table, 1)
+        self.empty = QLabel()
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.empty.setWordWrap(True)
+        self.empty.setStyleSheet(f"color: {MUTED}; font-size: 12pt; padding: 30px; border: none;")
+        card.body.addWidget(self.empty, 1)
         acts = QHBoxLayout()
         acts.setSpacing(8)
         self.btn_setup = _button("Set up docked Shimmers", TIPS["setup"])
@@ -298,14 +304,16 @@ class DevicesPage(QWidget):
         for s in self.base.slots:
             if not s.occupied:
                 continue
-            if not s.mac:                                     # docked, but not readable over USB
-                rows[f"slot{s.slot}"] = Row("", f"(slot {s.slot})", slot=s.slot, docked_error=s.error or "reading…")
+            if not s.mac:                                     # docked: being read, or not readable
+                rows[f"slot{s.slot}"] = Row("", "…", slot=s.slot, docked_error=s.error, reading=not s.error)
                 continue
             r = rows.setdefault(s.mac, Row(s.mac, s.name))
             r.slot, r.firmware, r.can_stream = s.slot, s.firmware, s.can_stream
         return sorted(rows.values(), key=lambda r: (r.slot == 0, r.slot, r.name.lower()))
 
     def _status_of(self, r: Row):
+        if r.reading:
+            return "reading it over USB…", WARNING
         if r.mac in self.busy:
             return self.busy[r.mac], BLUE
         res = self.base.results.get(r.slot) if r.slot else None
@@ -322,7 +330,9 @@ class DevicesPage(QWidget):
 
     def _render_all(self):
         dev = self.base.device
-        if dev is None:
+        if self.base.state == "checking":
+            self.pill_base.set("looking for a Shimmer base…", "warn")
+        elif dev is None:
             self.pill_base.set("no Shimmer base connected", "neutral")
         else:
             n = sum(s.occupied for s in self.base.slots) if self.base.slots else sum(self.base.occupancy or [])
@@ -330,6 +340,13 @@ class DevicesPage(QWidget):
         self.btn_setup.setVisible(dev is not None)
         self.btn_setup.setEnabled(self.backend is not None and not self.base.busy and bool(self.base.slots))
         self.rows = self._build_rows()
+        if not self.rows:
+            self.empty.setText("Looking for Shimmers in a base…" if self.base.state == "checking" or self.base.reading
+                               else "No Shimmers yet.\nPut them in the Shimmer Base and switch them on: they appear "
+                                    "here within a few seconds.\nShimmers that are not in a base: use "
+                                    "'Scan for Shimmers' below.")
+        self.table.setVisible(bool(self.rows))
+        self.empty.setVisible(not self.rows)
         self._render_table()
         self._render_found()
 
@@ -351,8 +368,11 @@ class DevicesPage(QWidget):
             name = QTableWidgetItem(r.name)
             name.setToolTip(f"{r.name}\nBluetooth address {r.mac}" + (f"\nfirmware {r.firmware}" if r.firmware else ""))
             t.setItem(i, 1, name)
-            where = QTableWidgetItem(f"base slot {r.slot}" if r.slot else "not docked")
-            where.setForeground(QColor("#1f1f1e" if r.slot else MUTED))
+            unknown = not r.slot and (self.base.state == "checking" or self.base.reading)
+            where = QTableWidgetItem(f"base slot {r.slot}" if r.slot else "checking…" if unknown else "not docked")
+            where.setForeground(QColor("#1f1f1e" if r.slot else WARNING if unknown else MUTED))
+            if unknown:
+                where.setToolTip("Still reading the base: this Shimmer may be docked")
             t.setItem(i, 2, where)
             bt = QTableWidgetItem("paired" if r.paired else "not paired")
             bt.setForeground(QColor(GOOD if r.paired else MUTED))

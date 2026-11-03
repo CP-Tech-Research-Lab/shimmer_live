@@ -262,7 +262,10 @@ def detect(cfg=None) -> list:
 
 def _identify(pid, sn, ports):
     if pid == FT4232H_PID:
-        for p in ports:
+        # Shimmer bases put the control channel on the 2nd FTDI port and the Shimmer UART on the 4th:
+        # try those first (any order still works, it is just slower).
+        control_first = ports[1:2] + ports[:1] + ports[2:]
+        for p in control_first:
             ver = _probe_control(p)
             if not ver:
                 continue
@@ -278,7 +281,7 @@ def _identify(pid, sn, ports):
                     log.info("%s found but no Shimmer docked: cannot tell the Shimmer port yet", kind)
                     return dev
                 link.select(first)
-                for q in ports:
+                for q in reversed(ports):
                     if q != p and _answers_dock_protocol(q):
                         dev.shimmer_port = q
                         break

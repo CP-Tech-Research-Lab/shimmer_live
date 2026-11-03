@@ -28,6 +28,8 @@ class BaseWatcher(QObject):
         self.occupancy = None
         self.busy = False             # reading slots or running setup
         self.setting_up = False
+        self.state = "checking"       # checking (not looked yet) | none (no base) | base
+        self.reading = False          # slots are being read: docked-or-not is not known yet
         self.timer = QTimer(self, interval=POLL_MS, timeout=self._poll)
 
     # ---------------- watching the USB ----------------
@@ -58,6 +60,9 @@ class BaseWatcher(QObject):
             self.busy = False
             dev, link, occ = res
             if dev is None:
+                was_checking, self.state = self.state == "checking", "none"
+                if was_checking:
+                    self.changed.emit()
                 if self.device is not None:
                     log.info("%s disconnected", self.device.label)
                     if self.link:
@@ -68,7 +73,7 @@ class BaseWatcher(QObject):
             if self.device is None or dev.serial != self.device.serial:
                 log.info("%s connected", dev.label)
                 self.results = {}
-            self.device, self.link = dev, link
+            self.device, self.link, self.state = dev, link, "base"
             if occ != self.occupancy:
                 self.occupancy = occ
                 self.read_slots()
@@ -81,24 +86,50 @@ class BaseWatcher(QObject):
         run_bg(work, done, failed, "base-poll")
 
     def read_slots(self):
+        """Read every slot, publishing each Shimmer as soon as it is read (~2 s per slot)."""
         if self.link is None:
             return
-        self.busy = True
+        self.busy = self.reading = True
+        self.changed.emit()
+        link = self.link
+
+        def work():
+            with link.lock:
+                occ = link.occupancy()
+                ui_call(self._placeholders, occ)
+                out = []
+                for i, occupied in enumerate(occ, start=1):
+                    info = link.read_slot(i, occupied) if occupied else basemod.SlotInfo(i, False)
+                    out.append(info)
+                    ui_call(self._slot_read, info)
+                link.disconnect()
+                return out
 
         def done(infos):
-            self.busy = False
-            before = {s.slot: s.mac for s in self.slots}
+            self.busy = self.reading = False
             self.slots = infos
-            for s in infos:                                  # a different Shimmer in that slot: forget old result
-                if before.get(s.slot) != s.mac:
-                    self.results.pop(s.slot, None)
             self.changed.emit()
 
         def failed(e):
-            self.busy = False
+            self.busy = self.reading = False
             log.info("could not read the base: %s", e)
+            self.changed.emit()
 
-        run_bg(lambda: self.link.read_all(), done, failed, "base-read")
+        run_bg(work, done, failed, "base-read")
+
+    def _placeholders(self, occ):
+        """Occupied slots are known at once; who is in them follows slot by slot."""
+        old = {s.slot: s for s in self.slots}
+        self.slots = [old[i] if i in old and old[i].occupied == o and old[i].mac else basemod.SlotInfo(i, o)
+                      for i, o in enumerate(occ, start=1)]
+        self.changed.emit()
+
+    def _slot_read(self, info):
+        prev = next((s for s in self.slots if s.slot == info.slot), None)
+        if prev is not None and prev.mac != info.mac:        # a different Shimmer in that slot: old result is stale
+            self.results.pop(info.slot, None)
+        self.slots = [info if s.slot == info.slot else s for s in self.slots]
+        self.changed.emit()
 
     # ---------------- one-click setup ----------------
     def setup_all(self):
