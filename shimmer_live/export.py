@@ -207,9 +207,11 @@ def analyze(folder) -> Analysis:
                  "recovered": a.recovered, "write_error": stop.get("write_error") if stop else None}
     for d in a.devices:
         st = (stop or {}).get("devices", {}).get(d.meta["mac"], _stats_from_events(a.events, d.meta["mac"], stop_ns))
-        expected = int(round(d.meta["sampling_rate_hz"] * duration))
-        d.stats = {"samples": len(d.data), "expected_samples": expected,
-                   "completeness_pct": 100.0 * len(d.data) / expected if expected else 0.0, **st}
+        # SD recordings: each Shimmer starts and stops at its own time, so the expected count comes
+        # from its own recording span (written by sdlog.build_recording).
+        expected = st.get("expected_samples") or int(round(d.meta["sampling_rate_hz"] * duration))
+        d.stats = {**st, "samples": len(d.data), "expected_samples": expected,
+                   "completeness_pct": 100.0 * len(d.data) / expected if expected else 0.0}
         name, rate = d.meta["name"], d.meta["sampling_rate_hz"]
         a.qc += qc.check_completeness(name, len(d.data), expected, st["disconnects"], st["downtime_s"],
                                       st["longest_gap_s"])

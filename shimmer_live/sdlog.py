@@ -43,9 +43,20 @@ NAME_MAX = 12                  # the Shimmer keeps a short experiment id; existi
 CONNECT_ATTEMPTS = 6           # a Shimmer only listens for connections part of the time
 VERIFY_ATTEMPTS = 4
 OFFSET_ROUNDS = 7
+SD_GAP_S = 1.0                 # a gap in an SD log this long counts as an interruption
 SD_APPEAR_TIMEOUT_S = 20.0
 STATUS_BITS = ("docked", "sensing", "rtc_set", "logging", "streaming", "sd_present", "sd_error", "red_led")
 RECORDING, FAILED, STOPPED, IMPORTED = "recording", "failed", "stopped", "imported"
+UNCONFIRMED = "unconfirmed"     # start was sent but not confirmed: treat as possibly recording
+MAY_RECORD = ("starting", RECORDING, UNCONFIRMED)
+
+
+class StartUnconfirmed(RuntimeError):
+    """The start command was sent but the Shimmer could not be asked afterwards: it may be recording."""
+
+    def __init__(self, message, result):
+        super().__init__(message)
+        self.result = result
 
 
 class PreciseRtc(ShimmerCommand):
@@ -63,23 +74,27 @@ def clean_name(name: str) -> str:
 # ------------------------------------------------------------------ Bluetooth
 class Connection:
     def __init__(self, mac, cfg, attempts=CONNECT_ATTEMPTS):
+        # Connecting and the first reply are both retried: a Shimmer that has just started logging
+        # can take >10 s to answer (seen on D1A4, LogAndStream 0.16), and the next try usually works.
         last = None
         for i in range(attempts):
+            link = None
             try:
-                self.link = open_link(mac, cfg)
-                break
+                link = open_link(mac, cfg)
+                quiesce(link)
+                dev = ShimmerBluetooth(link)
+                _timed(dev.initialize, 10.0)
+                self.link, self.dev = link, dev
+                return
             except Exception as e:                    # noqa: BLE001 - retried, last error re-raised
                 last = e
+                if link is not None:
+                    try:
+                        link.cancel_read()
+                    finally:
+                        link.close()
                 time.sleep(1.5)
-        else:
-            raise ConnectionError(f"did not answer over Bluetooth ({last})")
-        try:
-            quiesce(self.link)
-            self.dev = ShimmerBluetooth(self.link)
-            _timed(self.dev.initialize, 10.0)
-        except Exception:
-            self.link.close()
-            raise
+        raise ConnectionError(f"did not answer over Bluetooth ({last})")
 
     def status(self) -> dict:
         return dict(zip(STATUS_BITS, _timed(self.dev.get_status, 5.0)))
@@ -139,22 +154,34 @@ def start_device(mac, cfg, session_name, config_time, progress=lambda text: None
         _timed(conn.dev.set_experiment_id, 5.0, session_name)
         _timed(conn.dev.set_config_time, 5.0, int(config_time))
         progress("starting the recording…")
+        sent_at = time.time()
         _timed(conn.dev.start_logging, 5.0)
+    except Exception as e:
+        if "sent_at" in locals():                    # start was sent: it may well be recording
+            raise StartUnconfirmed(f"start sent, but no answer afterwards ({e})",
+                                   {"firmware": fw, "start_offset": offset, "started_unix": sent_at}) from e
+        raise
     finally:
         conn.close()
+    result = {"firmware": fw, "battery_pct": battery, "start_offset": offset, "started_unix": sent_at}
     progress("checking it is recording…")
+    last = None
     for i in range(VERIFY_ATTEMPTS):
         time.sleep(1.5)
         try:
-            conn = Connection(mac, cfg, attempts=3)
-        except ConnectionError:
+            conn = Connection(mac, cfg, attempts=2)
+            try:
+                st = conn.status()
+            finally:
+                conn.close()
+        except Exception as e:                        # noqa: BLE001 - retried; never decides "failed"
+            last = e
             continue
-        try:
-            st = conn.status()
-        finally:
-            conn.close()
         if st["logging"]:
-            return {"firmware": fw, "battery_pct": battery, "start_offset": offset, "started_unix": time.time()}
+            return result
+        last = None
+    if last is not None:
+        raise StartUnconfirmed(f"started, but could not confirm it ({last}): press Check status", result)
     raise RuntimeError("was told to start, but does not report recording")
 
 
@@ -407,9 +434,14 @@ def build_recording(session: dict, loaded: dict, out_folder, values: str) -> Pat
                           "calibration": sp.calibration} for sp in specs],
         })
         gaps = np.diff(d.ticks) / clocks.TICKS_PER_S if len(d.ticks) > 1 else np.empty(0)
-        big = gaps[gaps > 3.0 / d.rate_hz]
+        # Short gaps (10-120 ms) are normal in SD logs: seen once a minute on every unit, and when a host
+        # connects to a logging Shimmer on firmware older than 1.01.009. Only >= 1 s counts as an interruption.
+        big = gaps[gaps >= SD_GAP_S]
+        span = (d.ticks[-1] - d.ticks[0]) / clocks.TICKS_PER_S if len(d.ticks) > 1 else 0.0
         stats[mac] = {"disconnects": int(len(big)), "downtime_s": float(big.sum()),
-                      "longest_gap_s": float(big.max()) if len(big) else 0.0}
+                      "longest_gap_s": float(gaps.max()) if len(gaps) else 0.0,
+                      "short_gaps": int(((gaps > 3.0 / d.rate_hz) & (gaps < SD_GAP_S)).sum()),
+                      "expected_samples": int(round(span * d.rate_hz)) + 1}
         for f in raw_files:                          # original files go into the ZIP too
             target = folder / "sd_raw" / name / Path(f).parent.name / Path(f).name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -461,7 +493,7 @@ def recording_macs(cfg) -> set:
     s = active(cfg)
     if not s:
         return set()
-    return {m for m, d in s["devices"].items() if d.get("state") in ("starting", RECORDING)}
+    return {m for m, d in s["devices"].items() if d.get("state") in MAY_RECORD}
 
 
 def add_keypoint(cfg, kp) -> dict:

@@ -609,6 +609,17 @@ class DevicesPage(QWidget):
                 "a docked Shimmer does not record. Take them out (switched on), then continue.\n\n"
                 "Continue anyway?") != QMessageBox.Yes:
             return
+        picked = {m for m, _ in devs}
+        risky = [r.name for r in self.rows if r.mac in picked
+                 and (fwmod.parse(r.firmware) or ("", (9, 9, 9)))[1][:2] in ((0, 15), (0, 16))]
+        if risky and QMessageBox.question(
+                self, "Record on SD cards",
+                f"{', '.join(risky)} run{'s' if len(risky) == 1 else ''} LogAndStream 0.15/0.16. With that firmware "
+                "Bluetooth can lock up right after the SD recording starts (seen on 3 of these units; fixed by "
+                "Shimmer in 1.00.015). The app then cannot check or stop them: you would stop them with their "
+                "own button BEFORE docking them.\n\nUpdating their firmware avoids this. Continue anyway?"
+        ) != QMessageBox.Yes:
+            return
         dlg = StartSdDialog(self, [n for _, n in devs])
         if dlg.exec():
             self.start_sd.emit(dlg.session_name(), devs)

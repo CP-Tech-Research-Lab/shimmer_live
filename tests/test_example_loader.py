@@ -50,3 +50,20 @@ def test_loader_command_line(tmp_path, clock, capsys):
     out = capsys.readouterr().out
     assert "Shimmer3-8395" in out and "keypoints: rest start" in out and "Notes: all fine" in out
     assert (path.with_suffix("") / "Shimmer3-401F.csv").exists()
+
+
+def test_loader_reads_an_sd_recording(tmp_path):
+    """SD recordings carry the Shimmers' binary files in sd_raw/: the loader must skip them."""
+    from tests.test_sdlog import DATA, MAC
+    from shimmer_live import export, sdlog
+    from shimmer_live.config import Config
+    d = sdlog.read_files([DATA])
+    s = sdlog.new_session(Config(tmp_path / "c.json"), "P_12", [(MAC, "Shimmer3-8395")], "raw", [])
+    s["devices"][MAC]["state"] = sdlog.STOPPED
+    z = export.write_zip(export.analyze(sdlog.build_recording(s, {MAC: ("Shimmer3-8395", d, [DATA])}, tmp_path,
+                                                              "raw")), "sd", "", tmp_path)
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "examples"))
+    from load_recording import load_recording
+    rec = load_recording(z)
+    assert len(rec["devices"]["Shimmer3-8395"]) == 7442

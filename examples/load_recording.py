@@ -46,7 +46,8 @@ def read_consensys_csv(data: bytes) -> tuple:
     lines = _lines(data)
     names = next(csv.reader([lines[0]]))
     units = next(csv.reader([lines[1]]))
-    df = pd.read_csv(io.StringIO("\n".join(lines[2:])), header=None, names=names)
+    text = {n: str for n in names if n.endswith("_Keypoint")}       # mostly empty: keep it text
+    df = pd.read_csv(io.StringIO("\n".join(lines[2:])), header=None, names=names, dtype=text, low_memory=False)
     return df, units
 
 
@@ -65,8 +66,8 @@ def load_recording(path) -> dict:
         out["notes"] = zf.read("notes.txt").decode("utf-8") if "notes.txt" in zf.namelist() else ""
         device_names = [d["name"] for d in info["devices"]]
         for member in zf.namelist():
-            if member in ("info.json", "notes.txt"):
-                continue
+            if member in ("info.json", "notes.txt") or not member.endswith(".csv"):
+                continue                     # e.g. sd_raw/: the Shimmers' original SD files (binary)
             if member in TABLES:
                 out[member[:-4]] = read_plain_csv(zf.read(member))
                 continue

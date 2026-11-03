@@ -156,3 +156,20 @@ def test_session_survives_in_the_settings(tmp_path):
     from types import SimpleNamespace
     sdlog.add_keypoint(again, SimpleNamespace(name="rest", color="#1aa"))
     assert Config(tmp_path / "c.json").data[sdlog.SESSION_KEY]["keypoints"][0]["name"] == "rest"
+
+
+def test_start_sent_but_not_confirmed_is_never_failed(shimmer, tmp_path, monkeypatch):
+    """Seen with 5 real Shimmers: start_logging worked, the confirming reconnect timed out, and the
+    app called them 'did not start' while they were recording."""
+    real = FakeConn.__init__
+    calls = {"n": 0}
+
+    def flaky(self, mac, cfg, attempts=0):
+        calls["n"] += 1
+        if calls["n"] > 1:                                 # every reconnect after the start times out
+            raise ConnectionError("did not answer over Bluetooth (initialize got no reply within 10 s)")
+        real(self, mac, cfg, attempts)
+    monkeypatch.setattr(FakeConn, "__init__", flaky)
+    with pytest.raises(sdlog.StartUnconfirmed) as e:
+        sdlog.start_device(MAC, Config(tmp_path / "c.json"), "P_12", 1)
+    assert shimmer["logging"] and e.value.result["start_offset"]["offset_ms"] == -55.0

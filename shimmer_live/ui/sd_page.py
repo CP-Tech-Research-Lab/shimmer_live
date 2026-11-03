@@ -218,7 +218,7 @@ class SdPage(QWidget):
                 try:
                     res, err = fn(mac, lambda text, m=mac: ui_call(self._progress, m, text)), None
                 except Exception as e:                    # noqa: BLE001 - reported per Shimmer
-                    res, err = None, str(e)
+                    res, err = None, e
                 ui_call(on_result, mac, res, err)
 
         def done(_):
@@ -251,7 +251,10 @@ class SdPage(QWidget):
 
         def result(mac, res, err):
             self.progress.pop(mac, None)
-            if err:
+            if isinstance(err, sdlog.StartUnconfirmed):     # may well be recording: never "failed"
+                self._save_device(mac, state=sdlog.UNCONFIRMED, error="", start=err.result,
+                                  firmware=err.result.get("firmware", ""), note=str(err))
+            elif err:
                 self._save_device(mac, state=sdlog.FAILED, error=f"{self._dev(mac)['name']} {err}")
             else:
                 self._save_device(mac, state=sdlog.RECORDING, error="", start=res, firmware=res["firmware"])
@@ -262,14 +265,20 @@ class SdPage(QWidget):
         self._start([m for m, d in self.session["devices"].items() if d.get("state") == sdlog.FAILED])
 
     def _check_all(self):
-        macs = [m for m, d in self.session["devices"].items() if d.get("state") in (sdlog.RECORDING, sdlog.STOPPED)]
+        macs = [m for m, d in self.session["devices"].items()
+                if d.get("state") in sdlog.MAY_RECORD + (sdlog.STOPPED,)]
 
         def result(mac, res, err):
             self.progress.pop(mac, None)
             if err:
-                self._save_device(mac, last_check={"ok": False, "error": err, "when": clocks.unix_ns()})
+                self._save_device(mac, last_check={"ok": False, "error": f"{err}", "when": clocks.unix_ns()})
             else:
                 st = res["status"]
+                state = self._dev(mac).get("state")
+                if st["logging"] and state in (sdlog.UNCONFIRMED, "starting"):
+                    self._save_device(mac, state=sdlog.RECORDING, note="")          # confirmed now
+                elif not st["logging"] and state == sdlog.UNCONFIRMED:
+                    self._save_device(mac, state=sdlog.FAILED, error="was told to start, but is not recording")
                 self._save_device(mac, last_check={"ok": True, "logging": st["logging"], "docked": st["docked"],
                                                    "sd_error": st["sd_error"], "offset": res["offset"],
                                                    "when": clocks.unix_ns()})
@@ -277,7 +286,7 @@ class SdPage(QWidget):
         self._run("check", macs, lambda mac, progress: sdlog.check_device(mac, self.cfg), result)
 
     def _stop_all(self):
-        macs = [m for m, d in self.session["devices"].items() if d.get("state") == sdlog.RECORDING]
+        macs = [m for m, d in self.session["devices"].items() if d.get("state") in sdlog.MAY_RECORD]
 
         def fn(mac, progress):
             return sdlog.stop_device(mac, self.cfg, progress)
@@ -294,7 +303,7 @@ class SdPage(QWidget):
 
         def done():
             s = self.session
-            if s and not any(d.get("state") == sdlog.RECORDING for d in s["devices"].values()):
+            if s and not any(d.get("state") in sdlog.MAY_RECORD for d in s["devices"].values()):
                 s["stopped"] = True
                 s["stopped_unix_ns"] = clocks.unix_ns()
                 self.cfg.save()
@@ -308,12 +317,12 @@ class SdPage(QWidget):
             QMessageBox.information(self, "Import from base", "Connect the Shimmer base by USB and wait until "
                                     "the Devices page shows it.")
             return
-        still = [d["name"] for d in s["devices"].values() if d.get("state") == sdlog.RECORDING]
+        still = [d["name"] for d in s["devices"].values() if d.get("state") in sdlog.MAY_RECORD]
         if still and QMessageBox.question(
                 self, "Import from base", f"{', '.join(still)} did not confirm the stop. If they were docked while "
                 "recording, their last file may be empty.\n\nImport anyway?") != QMessageBox.Yes:
             return
-        wanted = [m for m, d in s["devices"].items() if d.get("state") in (sdlog.RECORDING, sdlog.STOPPED)]
+        wanted = [m for m, d in s["devices"].items() if d.get("state") in sdlog.MAY_RECORD + (sdlog.STOPPED,)]
         slots = {m: self.base.locate(m) for m in wanted}
         missing = [s["devices"][m]["name"] for m, sl in slots.items() if sl is None]
         docked = [m for m, sl in slots.items() if sl is not None]
@@ -411,7 +420,7 @@ class SdPage(QWidget):
 
     def _can_mark(self):
         s = self.session
-        return bool(s) and not s.get("stopped") and any(d.get("state") == sdlog.RECORDING
+        return bool(s) and not s.get("stopped") and any(d.get("state") in sdlog.MAY_RECORD
                                                        for d in s["devices"].values())
 
     def _update_keypoint_buttons(self):
@@ -434,7 +443,7 @@ class SdPage(QWidget):
         if s is None:
             return
         devs = s["devices"]
-        n_rec = sum(d.get("state") == sdlog.RECORDING for d in devs.values())
+        n_rec = sum(d.get("state") in sdlog.MAY_RECORD for d in devs.values())
         started = dt.datetime.fromtimestamp(s["start_unix_ns"] / 1e9)
         elapsed = fmt_duration((clocks.unix_ns() - s["start_unix_ns"]) / 1e9)
         if self.busy == "start":
@@ -463,10 +472,10 @@ class SdPage(QWidget):
         failed = any(d.get("state") == sdlog.FAILED for d in devs.values())
         self.btn_retry.setVisible(failed and not s.get("stopped"))
         self.btn_retry.setEnabled(idle)
-        self.btn_check.setEnabled(idle and any(d.get("state") in (sdlog.RECORDING, sdlog.STOPPED)
+        self.btn_check.setEnabled(idle and any(d.get("state") in sdlog.MAY_RECORD + (sdlog.STOPPED,)
                                                for d in devs.values()))
         self.btn_stop.setEnabled(idle and n_rec > 0)
-        self.btn_import.setEnabled(idle and any(d.get("state") in (sdlog.RECORDING, sdlog.STOPPED)
+        self.btn_import.setEnabled(idle and any(d.get("state") in sdlog.MAY_RECORD + (sdlog.STOPPED,)
                                                 for d in devs.values()))
         self.btn_discard.setEnabled(idle)
         self.btn_back.setEnabled(self.busy != "import")
@@ -499,6 +508,8 @@ class SdPage(QWidget):
             return "● recording", CRITICAL
         if state == sdlog.STOPPED:
             return (f"■ stopped · in {slot}" if slot else "■ stopped · dock it to import"), GOOD
+        if state == sdlog.UNCONFIRMED:
+            return "? started, not confirmed: press Check status", WARNING
         if state == sdlog.FAILED:
             return "✖ did not start", CRITICAL
         if state == sdlog.IMPORTED:
