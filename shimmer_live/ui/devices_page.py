@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMes
                                QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget,
                                QTextBrowser, QVBoxLayout, QWidget)
 
-from .. import dock_setup
+from .. import dock_setup, sdlog
 from ..bt import BtDevice, PairingError
 from ..session import probe_device
 from .base_panel import BaseWatcher
@@ -22,6 +22,7 @@ from .device_settings import DeviceSettingsDialog
 from .dialogs import PinDialog
 from .guide import GUIDE_HTML
 from .keypoints_editor import KeypointsEditor
+from .sd_page import StartSdDialog
 
 log = logging.getLogger("shimmerlive.devices")
 
@@ -39,6 +40,9 @@ TIPS = {
     "forget": "Remove this computer's Bluetooth pairing with the ticked (or highlighted) Shimmers. Docked Shimmers "
               "can be paired again with one click on 'Set up docked Shimmers'.",
     "live": "Open the live view and start streaming from the ticked Shimmers.",
+    "sd": "Make the ticked Shimmers record on their own SD cards (no Bluetooth while recording, so more than 7 "
+          "at once). Take them out of the base first. You mark keypoints and stop them from this app.",
+    "sd_open": "Open the SD recording in progress: keypoints, status, stop and import.",
     "settings": "Firmware information and device configuration: sampling rate, sensors, ECG gains, GSR range, name.",
     "scan": f"Search for Shimmers nearby over Bluetooth for {SCAN_SECONDS} s. Use this for Shimmers that are not in "
             f"a base.",
@@ -101,6 +105,8 @@ def _button(text, tip, role=None):
 class DevicesPage(QWidget):
     show_live = Signal(list)          # [(mac, name), ...]
     show_plugins = Signal()
+    start_sd = Signal(str, list)      # session name, [(mac, name), ...]
+    open_sd = Signal()
 
     def __init__(self, cfg, backend, backend_error):
         super().__init__()
@@ -109,6 +115,7 @@ class DevicesPage(QWidget):
         self.paired: list[BtDevice] = []
         self.found: list[BtDevice] = []
         self.rows: list[Row] = []
+        self._sd_macs = set()           # Shimmers recording on their SD card (sdlog session)
         self.live_blocked = False
         self.base = BaseWatcher(cfg, backend, self._ask_pin)
         self.base.changed.connect(self._render_all)
@@ -194,6 +201,9 @@ class DevicesPage(QWidget):
         for b in (self.btn_setup, self.btn_test, self.btn_forget):
             acts.addWidget(b)
         acts.addStretch(1)
+        self.btn_sd = _button("Record on SD cards…", TIPS["sd"])
+        self.btn_sd.clicked.connect(self._sd_clicked)
+        acts.addWidget(self.btn_sd)
         acts.addWidget(self.btn_live)
         card.body.addLayout(acts)
         lv.addWidget(card, 1)
@@ -317,6 +327,10 @@ class DevicesPage(QWidget):
     def _status_of(self, r: Row):
         if r.reading:
             return "reading it over USB…", WARNING
+        if r.mac in self._sd_macs:
+            if r.slot:
+                return "⚠ docked while recording to SD: open the SD recording page", CRITICAL
+            return f"● recording on its SD card (session {sdlog.active(self.cfg)['name']})", CRITICAL
         if r.mac in self.busy:
             return self.busy[r.mac], BLUE
         res = self.base.results.get(r.slot) if r.slot else None
@@ -354,12 +368,13 @@ class DevicesPage(QWidget):
 
     def _render_table(self):
         selected = set(self.cfg.data.get("selected", []))
+        self._sd_macs = sdlog.recording_macs(self.cfg)
         t = self.table
         t.blockSignals(True)
         t.setRowCount(len(self.rows))
         for i, r in enumerate(self.rows):
             # paired: tick to stream it; docked but not paired yet: tick to include it in the setup
-            usable = bool(r.mac) and r.can_stream and (r.paired or bool(r.slot))
+            usable = bool(r.mac) and r.can_stream and (r.paired or bool(r.slot)) and r.mac not in self._sd_macs
             chk = QTableWidgetItem()
             chk.setFlags((Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable) if usable
                          else Qt.ItemIsSelectable)
@@ -390,7 +405,7 @@ class DevicesPage(QWidget):
             t.setItem(i, 4, st)
             if r.paired:
                 gear = _button("⚙ Settings", TIPS["settings"], "small")
-                gear.setEnabled(r.mac not in self.busy and not self.base.setting_up)
+                gear.setEnabled(r.mac not in self.busy and not self.base.setting_up and r.mac not in self._sd_macs)
                 gear.clicked.connect(lambda _=False, mac=r.mac, nm=r.name: self._settings(mac, nm))
                 t.setCellWidget(i, 5, gear)
             else:
@@ -443,7 +458,8 @@ class DevicesPage(QWidget):
         if devs:
             return devs
         rows = sorted({i.row() for i in self.table.selectedItems()})
-        return [(self.rows[i].mac, self.rows[i].name) for i in rows if self.rows[i].paired]
+        return [(self.rows[i].mac, self.rows[i].name) for i in rows
+                if self.rows[i].paired and self.rows[i].mac not in self._sd_macs]
 
     def _on_check_changed(self, item):
         if item.column() == 0:
@@ -456,6 +472,14 @@ class DevicesPage(QWidget):
         busy = any(m in self.busy for m, _ in sel) or self.base.setting_up
         self.btn_live.setEnabled(bool(sel) and not busy and not self.live_blocked)
         self.btn_live.setText(f"Show live data ({len(sel)})  ▶" if sel else "Show live data  ▶")
+        if sdlog.active(self.cfg):
+            self.btn_sd.setText("SD recording in progress  ▶")
+            self.btn_sd.setToolTip(TIPS["sd_open"])
+            self.btn_sd.setEnabled(True)
+        else:
+            self.btn_sd.setText(f"Record on SD cards ({len(sel)})…" if sel else "Record on SD cards…")
+            self.btn_sd.setToolTip(TIPS["sd"])
+            self.btn_sd.setEnabled(bool(sel) and not busy and self.backend is not None)
         slots = self._checked_slots()
         self.btn_setup.setText(f"Set up docked Shimmers ({len(slots)})" if slots else "Set up docked Shimmers")
         self.btn_setup.setEnabled(self.backend is not None and not self.base.busy and bool(slots))
@@ -549,6 +573,21 @@ class DevicesPage(QWidget):
     def _set_found(self, devs):
         self.found = devs
         self._render_found()
+
+    def _sd_clicked(self):
+        if sdlog.active(self.cfg):
+            self.open_sd.emit()
+            return
+        devs = self.checked_devices()
+        docked = [r.name for r in self.rows if r.slot and r.mac in {m for m, _ in devs}]
+        if docked and QMessageBox.question(
+                self, "Record on SD cards", f"{', '.join(docked)} {'is' if len(docked) == 1 else 'are'} in the base: "
+                "a docked Shimmer does not record. Take them out (switched on), then continue.\n\n"
+                "Continue anyway?") != QMessageBox.Yes:
+            return
+        dlg = StartSdDialog(self, [n for _, n in devs])
+        if dlg.exec():
+            self.start_sd.emit(dlg.session_name(), devs)
 
     def _ask_pin(self, device_name):
         """Ask the user for a PIN (only used if the standard Shimmer PIN 1234 was refused)."""

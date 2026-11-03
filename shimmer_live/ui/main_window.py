@@ -14,6 +14,7 @@ from .dialogs import SaveRecordingDialog
 from .icons import app_icon
 from .live_page import LivePage
 from .plugins_page import PluginsPage
+from .sd_page import SdPage
 
 log = logging.getLogger("shimmerlive.main")
 
@@ -34,13 +35,17 @@ class MainWindow(QMainWindow):
         self.devices = DevicesPage(cfg, backend, err)
         self.live = LivePage(cfg)
         self.plugins = PluginsPage(cfg)
-        for page in (self.devices, self.live, self.plugins):
+        self.sd = SdPage(cfg, self.devices.base)
+        for page in (self.devices, self.live, self.plugins, self.sd):
             self.stack.addWidget(page)
         self.setCentralWidget(self.stack)
         self.devices.show_live.connect(self._open_live)
         self.devices.show_plugins.connect(lambda: self.stack.setCurrentWidget(self.plugins))
         self.plugins.back.connect(lambda: self.stack.setCurrentWidget(self.devices))
         self.live.back.connect(self._close_live)
+        self.devices.start_sd.connect(self._start_sd)
+        self.devices.open_sd.connect(self._open_sd)
+        self.sd.back.connect(self._close_sd)
         self.devices.refresh()
         QTimer.singleShot(500, self._recover_unsaved)
         full = QShortcut(QKeySequence(Qt.Key_F11), self)
@@ -59,6 +64,18 @@ class MainWindow(QMainWindow):
         log.info("live view: %s", ", ".join(n for _, n in devices))
         self.live.start(devices, self.plugins.enabled_entries())
         self.stack.setCurrentWidget(self.live)
+
+    def _start_sd(self, name, devices):
+        self.stack.setCurrentWidget(self.sd)
+        self.sd.start_new(name, devices)
+
+    def _open_sd(self):
+        self.sd.open()
+        self.stack.setCurrentWidget(self.sd)
+
+    def _close_sd(self):
+        self.stack.setCurrentWidget(self.devices)
+        self.devices._render_all()
 
     def _close_live(self):
         self.stack.setCurrentWidget(self.devices)

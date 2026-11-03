@@ -72,6 +72,15 @@ automatically: its old pairing is removed and it is paired again.</p>
 <tr><td>{_dot(R)}</td><td>Red 0.1 s on / 5 s off</td><td><b>Low charge &ndash; recharge soon</b></td></tr>
 </table>
 
+<h3>More than 7 Shimmers: record on their SD cards</h3>
+<ol>
+<li>Tick the Shimmers, take them <b>out of the base</b> (switched on) and press <b>Record on SD cards…</b>.</li>
+<li>Each one records on its own card. Mark keypoints on the SD recording page (keys 1&ndash;9). You can close the
+    app meanwhile.</li>
+<li>Press <b>Stop recording</b> <i>before</i> docking them: a Shimmer docked while recording loses its file.</li>
+<li>Dock them and press <b>Import from base</b>: you get the usual recording ZIP.</li>
+</ol>
+
 <h3>During live view and recording</h3>
 <ul>
 <li>A <b>red banner</b> appears when a Shimmer stops sending data; the app reconnects on its own. Bring the device

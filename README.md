@@ -48,6 +48,14 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
    - Recordings go to `~/Documents/ShimmerRecordings`; change this with *Folder…*.
    - *ⓘ Timestamps* shows which system clock functions are used on this machine, and how other systems can sync with the recording.
 
+7. **Recording on SD cards** (*Record on SD cards…* on the start page). Each ticked Shimmer records on its own SD card with no Bluetooth link, so any number can record at once. Bluetooth allows only 7 live connections.
+   - **Start:** take the Shimmers **out of the base**, because a docked Shimmer does not record. The app connects to each one in turn, sets its clock to this PC's time with sub-second precision, writes the session name, starts it, and confirms on a new connection that it is recording.
+   - **While they record:** the SD recording page shows each Shimmer's state and marks **keypoints** (keys 1–9). Keypoints are saved at once with this PC's time. *Check status* confirms each Shimmer is still recording. You can close the app: the session is kept in the settings and is there when you reopen it.
+   - **Stop:** press *Stop recording* **before docking** the Shimmers. Docking a Shimmer while it records ends the recording without closing the file, which then reads as 0 bytes. This was verified on a Shimmer3.
+   - **Import:** dock the Shimmers and press *Import from base*. For each one, the base shows its SD card to the PC (`SDC,NN$`). The app copies that session's files, converts them, and opens the usual save dialog (quality checks, name, notes). The ZIP has the same layout as a live recording, plus the original binary files in `sd_raw/`. Nothing is deleted from the cards.
+   - **Timing:** each Shimmer clock − PC clock offset is measured over Bluetooth, keeping the fastest of several round trips, at start and again at stop. Sample times are corrected along the line between the two, which removes crystal drift. Expect an accuracy of tens of ms.
+   - **Requirements:** LogAndStream firmware and an SD card. On Linux the card is mounted with `udisksctl`, without root. On Windows it gets a drive letter; this path is untested.
+
 ## Recording format
 
 `[name_]shimmer_YYYY-MM-DD_HH-MM-SS.mmm_UTC+hhmm.zip`. The file name always includes the exact start time.
@@ -121,6 +129,7 @@ shimmer_live/
   device_config.py  read / change on-device settings
   base.py           Shimmer Base6U/Base15U and Dock over USB: slots, addresses, firmware, clock
   dock_setup.py     one-click setup of docked Shimmers (pair, test, set clock)
+  sdlog.py          recording on the Shimmers' SD cards: start/check/stop, clock offsets, import
   bt/               pairing and discovery: bluez.py (Linux, D-Bus), windows.py (WinRT)
   ui/               Qt pages and dialogs
 examples/           recording loader, example plugin

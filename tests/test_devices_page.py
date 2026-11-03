@@ -102,3 +102,18 @@ def test_refresh_starts_over_from_checking(page, monkeypatch):
     assert polled and page.base.state == "checking" and page.base.occupancy is None
     assert cells(page)["Shimmer3-8684"][0] == "checking…"
     assert "looking for a Shimmer base" in page.pill_base.text()
+
+
+def test_shimmers_recording_on_sd_are_flagged_and_locked(page):
+    from PySide6.QtCore import Qt
+    from shimmer_live import sdlog
+    mac = "00:06:66:B9:83:95"
+    page.cfg.data["selected"] = [mac]
+    page.paired = [BtDevice(mac, "Shimmer3-8395", True)]
+    sdlog.new_session(page.cfg, "P_12", [(mac, "Shimmer3-8395")], "raw", [])
+    page.cfg.data[sdlog.SESSION_KEY]["devices"][mac]["state"] = sdlog.RECORDING
+    page.base.state = "none"
+    page._render_all()
+    assert "recording on its SD card" in cells(page)["Shimmer3-8395"][2]
+    assert not page.table.item(0, 0).flags() & Qt.ItemIsUserCheckable     # not for live view meanwhile
+    assert page.checked_devices() == [] and "in progress" in page.btn_sd.text()
