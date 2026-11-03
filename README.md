@@ -54,7 +54,14 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
    - **Stop:** press *Stop recording* **before docking** the Shimmers. Docking a Shimmer while it records ends the recording without closing the file, which then reads as 0 bytes. This was verified on a Shimmer3.
    - **Import:** dock the Shimmers and press *Import from base*. For each one, the base shows its SD card to the PC (`SDC,NN$`). The app copies that session's files, converts them, and opens the usual save dialog (quality checks, name, notes). The ZIP has the same layout as a live recording, plus the original binary files in `sd_raw/`. Nothing is deleted from the cards.
    - **Timing:** each Shimmer clock − PC clock offset is measured over Bluetooth, keeping the fastest of several round trips, at start and again at stop. Sample times are corrected along the line between the two, which removes crystal drift. Expect an accuracy of tens of ms.
+   - **Confirmation:** if a Shimmer does not answer after the start command, it is shown as *started, not confirmed*, never as failed, because it may well be recording. *Check status* resolves it, and *Stop* includes it.
+   - **Firmware 0.15/0.16:** Bluetooth can lock up right after the SD start. This happened on three RN4678 units in testing, and Shimmer fixed it in 1.00.015. Those units must then be stopped with their own button before docking, and the app warns before starting them.
+   - **Short gaps:** gaps of 10–120 ms are normal in SD logs. They appear once a minute, and when the app connects to a logging Shimmer on firmware older than 1.01.009. Only gaps of 1 s or more count as interruptions, and completeness is measured over each Shimmer's own recording period.
    - **Requirements:** LogAndStream firmware and an SD card. On Linux the card is mounted with `udisksctl`, without root. On Windows it gets a drive letter; this path is untested.
+
+**Limits found in testing** (Linux, Intel AX211 Bluetooth, 2 Base6U, 12 Shimmers):
+- **Live streaming:** at most **6 Shimmers at once** on this PC. Linux refuses the 7th with "Too many links". The app reports this, remembers the limit and warns before opening live view with more. Use SD recording for more.
+- **Several bases:** any number is supported, shown as *base A · slot 3* and so on, and they are read in parallel.
 
 ## Recording format
 
