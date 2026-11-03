@@ -45,6 +45,10 @@ class FakeConn:
             def get_battery_state(self, _):
                 return 90.0
 
+            def get_inquiry(self):
+                from types import SimpleNamespace
+                return 256.0, 0, [] if dev.st.get("no_sensors") else [SimpleNamespace(name="EXG_ADS1292R_1_CH1_24BIT")]
+
             def _process_and_wait(self, cmd):
                 dev.st["rtc_set"] = True
 
@@ -91,6 +95,7 @@ def test_start_sets_clock_and_name_then_confirms(shimmer, tmp_path):
     ({"sd_present": False}, "no SD card"),
     ({"fw": "SDLog"}, "LogAndStream"),
     ({"broken": True}, "does not report recording"),
+    ({"no_sensors": True}, "no sensors enabled"),
 ])
 def test_start_refuses_with_a_reason(shimmer, tmp_path, state, message):
     shimmer.update(state)

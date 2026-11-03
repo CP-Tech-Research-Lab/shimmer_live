@@ -125,6 +125,9 @@ def start_device(mac, cfg, session_name, config_time, progress=lambda text: None
             raise RuntimeError("reports an SD card error")
         if st["logging"]:
             raise RuntimeError("is already recording to its SD card (stop it first)")
+        _rate, _, chans = _timed(conn.dev.get_inquiry, 5.0)
+        if not [c for c in chans if c.name != "TIMESTAMP"]:
+            raise RuntimeError("has no sensors enabled, so it would record nothing. Turn some on in ⚙ Settings")
         battery = None
         try:
             battery = _timed(conn.dev.get_battery_state, 5.0, True)

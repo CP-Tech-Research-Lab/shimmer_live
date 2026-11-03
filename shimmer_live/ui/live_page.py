@@ -794,6 +794,15 @@ class LivePage(QWidget):
             QMessageBox.warning(self, "Start recording", "Nothing is selected for recording (the dot buttons in "
                                                          "the Signals panel).")
             return
+        nothing = [s.name for s in ready if not record_keys.get(s.mac)
+                   and not any(plugin_outputs.get(b) for b in self._bindings(s))]
+        if nothing and len(nothing) < len(ready) and QMessageBox.question(
+                self, "Start recording",
+                f"Nothing is selected to record for {', '.join(nothing)} (by default only ECG and EDA are recorded), "
+                f"so {'it' if len(nothing) == 1 else 'they'} will NOT be in this recording.\n\nTo include "
+                f"{'it' if len(nothing) == 1 else 'them'}, press No and switch on the dots in the Signals panel."
+                f"\n\nStart without {'it' if len(nothing) == 1 else 'them'}?") != QMessageBox.Yes:
+            return
         if not_ready:
             names = ", ".join(s.name for s in not_ready)
             if QMessageBox.question(self, "Start recording",
