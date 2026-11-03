@@ -66,6 +66,8 @@ def describe_check(chk: dict | None) -> tuple[str, str]:
     if not chk:
         return "not tested yet", MUTED
     when = _local_time(chk.get("when", ""))
+    if chk.get("ok") and chk.get("channels") == []:
+        return "⚠ no sensors enabled: nothing to stream. Turn some on in ⚙ Settings", WARNING
     if chk.get("ok"):
         batt = chk.get("battery_pct")
         b = f" · battery {batt:.0f}%" if batt is not None else ""
@@ -491,6 +493,9 @@ class DevicesPage(QWidget):
         busy = any(m in self.busy for m, _ in sel) or self.base.setting_up
         self.btn_live.setEnabled(bool(sel) and not busy and not self.live_blocked)
         self.btn_live.setText(f"Show live data ({len(sel)})  ▶" if sel else "Show live data  ▶")
+        over = len(sel) > self.bt_limit()
+        self.btn_live.setToolTip(TIPS["live"] + (f"\n\n⚠ {len(sel)} ticked: this computer streams at most "
+                                                 f"{self.bt_limit()} at once." if over else ""))
         if sdlog.active(self.cfg):
             self.btn_sd.setText("SD recording in progress  ▶")
             self.btn_sd.setToolTip(TIPS["sd_open"])
@@ -673,7 +678,27 @@ class DevicesPage(QWidget):
         self.base.stop()
         super().hideEvent(ev)
 
+    def bt_limit(self) -> int:
+        """Most Shimmers this PC can stream at once: Bluetooth allows 7; the adapter may allow fewer
+        (learnt the first time it refuses one: 6 on an Intel AX211)."""
+        return int(self.cfg.data.get("bt_max_links") or 7)
+
     def _go_live(self):
         devs = self.checked_devices()
-        if devs:
-            self.show_live.emit(devs)
+        if not devs:
+            return
+        limit = self.bt_limit()
+        if len(devs) > limit:
+            learnt = "measured on this computer" if self.cfg.data.get("bt_max_links") else "the Bluetooth maximum"
+            box = QMessageBox(QMessageBox.Warning, "Too many Shimmers for live view",
+                              f"You ticked {len(devs)} Shimmers, but this computer's Bluetooth can stream at most "
+                              f"{limit} at once ({learnt}). The extra ones would not connect.\n\n"
+                              f"To use all {len(devs)}: record them on their SD cards ('Record on SD cards…').",
+                              parent=self)
+            first = box.addButton(f"Stream the first {limit}", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() is not first:
+                return
+            devs = devs[:limit]
+        self.show_live.emit(devs)

@@ -15,7 +15,7 @@ from pyshimmer import EChannelType, ShimmerBluetooth
 from . import clocks
 from .conversions import (GSR_NO_CONTACT_US, battery_percent, build_specs, device_kind,
                           exg_saturated)
-from .transport import DeviceUnreachable, open_link, quiesce
+from .transport import AdapterFull, DeviceUnreachable, open_link, quiesce
 
 log = logging.getLogger("shimmerlive.session")
 
@@ -264,11 +264,22 @@ class ShimmerSession:
                 msg = friendly_error(e)
                 log.warning("%s: attempt %d/%d failed: %s", self.name, self.attempt, INITIAL_ATTEMPTS, msg)
                 self.detail = f"attempt {self.attempt}/{INITIAL_ATTEMPTS} failed: {msg}"
+                if isinstance(e, AdapterFull):                 # retrying cannot help
+                    self._set_state(State.FAILED, msg)
+                    self.event("failed", f"could not connect: {msg}")
+                    return
                 if self._stop.wait(RETRY_PAUSE_S):
                     return
         else:
             self._set_state(State.FAILED, self.detail)
             self.event("failed", f"could not connect: {self.detail}")
+            return
+        if not self.specs:
+            # Seen on a real unit (A187): connected, but every sensor is off, so nothing is ever sent.
+            self._teardown()
+            msg = "no sensors are enabled on this Shimmer: turn some on in ⚙ Settings on the Devices page"
+            self._set_state(State.FAILED, msg)
+            self.event("failed", msg)
             return
         self._set_state(State.STREAMING, "streaming")
         self.event("connected", f"streaming at {self.rate:.0f} Hz via {self.link_desc}")

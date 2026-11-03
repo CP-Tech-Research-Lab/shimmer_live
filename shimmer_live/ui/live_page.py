@@ -681,8 +681,9 @@ class LivePage(QWidget):
             else:
                 self._lost_seen.discard(k)
             if s.state == State.FAILED:
-                a[f"failed-{k}"] = ("critical", f"{s.name}: could not connect — {s.detail}. Check it is on "
-                                                f"(blue LED blinking), close by and not connected elsewhere.",
+                hint = "" if ("Bluetooth is full" in s.detail or "no sensors" in s.detail) else \
+                    " Check it is on (blue LED blinking), close by and not connected elsewhere."
+                a[f"failed-{k}"] = ("critical", f"{s.name}: could not connect — {s.detail}.{hint}",
                                     ("Retry", s.retry, "Try to connect to this Shimmer again"))
             elif s.state == State.CONNECTING:
                 a[f"conn-{k}"] = ("info", f"Connecting to {s.name}… {s.detail}", None)

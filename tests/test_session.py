@@ -123,3 +123,35 @@ def test_health_flags(tmp_path, clock):
     assert g.no_contact_since is not None
     feed(g, clock, GSR_CHANNELS, 10, start_ts=10 * GSR_STEP, GSR_RAW=2048)   # ~50 uS
     assert g.no_contact_since is None
+
+
+def test_full_bluetooth_adapter_is_reported_and_remembered(tmp_path, monkeypatch):
+    """EMLINK ('Too many links') from the adapter: say so, remember the limit, do not retry."""
+    import errno
+    import socket
+    from shimmer_live import transport
+    from shimmer_live.config import Config
+
+    class FullSocket:
+        def __init__(self, *a):
+            pass
+
+        def settimeout(self, t):
+            pass
+
+        def connect(self, addr):
+            raise OSError(errno.EMLINK, "Too many links")
+
+        def close(self):
+            pass
+    monkeypatch.setattr(transport.socket, "socket", FullSocket)
+    monkeypatch.setattr(transport.socket, "AF_BLUETOOTH", 31, raising=False)
+    monkeypatch.setattr(transport.socket, "BTPROTO_RFCOMM", 3, raising=False)
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.setattr(transport, "_open_links", 6)
+    cfg = Config(tmp_path / "c.json")
+    cfg.update_device("00:06:66:B9:83:41", rfcomm_channel=1)
+    import pytest
+    with pytest.raises(transport.AdapterFull, match="6 connections"):
+        transport.open_link("00:06:66:B9:83:41", cfg)
+    assert cfg.data["bt_max_links"] == 6

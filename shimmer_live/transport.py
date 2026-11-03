@@ -17,6 +17,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 log = logging.getLogger("shimmerlive.transport")
@@ -36,18 +37,57 @@ class DeviceUnreachable(ConnectionError):
     """The Shimmer did not answer the Bluetooth page (off, out of range, or connected elsewhere)."""
 
 
+BUSY = {getattr(errno, "EBUSY", -1), getattr(errno, "EAGAIN", -1), getattr(errno, "EALREADY", -1),
+        getattr(errno, "EINPROGRESS", -1)}
+FULL = {getattr(errno, "EMLINK", -1)}
+_open_lock = threading.Lock()
+_open_links = 0                          # RFCOMM links this app has open right now
+# Connections are set up one at a time. Links still being set up also count against the adapter's
+# limit, so with 10 Shimmers connecting together "Too many links" came when only 1 was open, and a
+# Shimmer within the limit was turned away. One at a time, "full" means full (6 on an Intel AX211).
+CONNECT_LOCK = threading.Lock()
+
+
+class AdapterBusy(ConnectionError):
+    """This PC's Bluetooth adapter was busy setting up another connection: try again shortly."""
+
+
+class AdapterFull(ConnectionError):
+    """This PC's Bluetooth adapter holds no more connections ("Too many links"). Measured on an Intel
+    AX211 under Linux: 6 Shimmers at once, the 7th is refused at once with EMLINK."""
+
+    def __init__(self, limit: int):
+        super().__init__(f"this computer's Bluetooth is full ({limit} connections at once): stream fewer "
+                         f"Shimmers, or record the others on their SD cards")
+        self.limit = limit
+
+
+def _count(delta):
+    global _open_links
+    with _open_lock:
+        _open_links += delta
+
+
 class RfcommSocket:
     timeout = None
+    _counted = False
 
     def __init__(self, mac: str, channel: int, connect_timeout: float = 12.0):
         self.mac, self.channel = mac, channel
         self._sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
         self._sock.settimeout(connect_timeout)
         try:
-            self._sock.connect((mac, channel))
-        except OSError:
+            with CONNECT_LOCK:
+                self._sock.connect((mac, channel))
+        except OSError as e:
             self._sock.close()
+            if e.errno in FULL:
+                raise AdapterFull(_open_links) from e
+            if e.errno in BUSY:
+                raise AdapterBusy(f"{mac}: Bluetooth adapter busy ({e.strerror or e})") from e
             raise
+        _count(+1)
+        self._counted = True
         self._sock.settimeout(None)
         self._cancelled = False
         self.description = f"RFCOMM {mac} ch {channel}"
@@ -98,6 +138,9 @@ class RfcommSocket:
             pass
 
     def close(self) -> None:
+        if self._counted:
+            self._counted = False
+            _count(-1)
         try:
             self._sock.close()
         except OSError:
@@ -194,6 +237,8 @@ def find_rfcomm_channel(mac: str) -> int:
     for ch in PROBE_CHANNELS:
         try:
             link = RfcommSocket(mac, ch)
+        except (AdapterBusy, AdapterFull):
+            raise
         except OSError as e:
             if _is_unreachable(e):
                 raise DeviceUnreachable(f"{mac} did not answer ({e})") from e
@@ -232,11 +277,23 @@ def open_link(mac: str, cfg) -> object:
         if not hasattr(socket, "BTPROTO_RFCOMM"):
             raise ConnectionError(f"{mac}: no Bluetooth COM port found - is the device paired?")
 
+    try:
+        return _open_rfcomm(mac, cfg)
+    except AdapterFull as e:
+        if e.limit and cfg.data.get("bt_max_links") != e.limit:
+            cfg.data["bt_max_links"] = e.limit          # remembered: the start page warns before exceeding it
+            cfg.save()
+        raise
+
+
+def _open_rfcomm(mac, cfg):
     entry = cfg.device(mac)
     ch = entry.get("rfcomm_channel")
     if ch:
         try:
             return RfcommSocket(mac, ch)
+        except (AdapterBusy, AdapterFull):
+            raise                                # not a channel problem
         except OSError as e:
             if _is_unreachable(e):
                 raise DeviceUnreachable(f"{mac} did not answer ({e.strerror or e})") from e
