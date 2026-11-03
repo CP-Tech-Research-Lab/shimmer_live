@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMes
                                QTextBrowser, QVBoxLayout, QWidget)
 
 from .. import dock_setup, sdlog
+from .. import firmware as fwmod
 from ..bt import BtDevice, PairingError
 from ..session import probe_device
 from .base_panel import BaseWatcher
@@ -29,7 +30,7 @@ log = logging.getLogger("shimmerlive.devices")
 SCAN_SECONDS = 12
 ROW_H = 40
 BLUE = "#1f4e8c"
-COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Status", ""]
+COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Firmware", "Status", ""]
 TIPS = {
     "refresh": "Read again which Shimmers are paired with this computer and, if a base is connected, which are "
                "docked in it.",
@@ -175,10 +176,12 @@ class DevicesPage(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setWordWrap(False)
         hh = self.table.horizontalHeader()
-        for i, mode in enumerate((QHeaderView.ResizeToContents,) * 4 + (QHeaderView.Stretch, QHeaderView.ResizeToContents)):
+        for i, mode in enumerate((QHeaderView.ResizeToContents,) * 5 + (QHeaderView.Stretch, QHeaderView.ResizeToContents)):
             hh.setSectionResizeMode(i, mode)
         for i, tip in enumerate(("Tick to stream this Shimmer in live view", "Bluetooth name (hover for its address)",
                                  "Base slot, if the Shimmer is docked", "Whether this computer is paired with it",
+                                 "LogAndStream version. ⬆ old: update recommended · ↑ a newer version exists "
+                                 "(hover a version for details)",
                                  "Last test, or setup progress", "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.itemChanged.connect(self._on_check_changed)
@@ -313,7 +316,9 @@ class DevicesPage(QWidget):
         return [d for d in devs if d.looks_like_shimmer or self.only_shimmer.isChecked()]
 
     def _build_rows(self):
-        rows = {d.address: Row(d.address, d.name, True, device=d) for d in self._visible(self.paired)}
+        rows = {d.address: Row(d.address, d.name, True, device=d,
+                               firmware=(self.cfg.device(d.address).get("last_check") or {}).get("firmware", ""))
+                for d in self._visible(self.paired)}
         for s in self.base.slots:
             if not s.occupied:
                 continue
@@ -398,19 +403,25 @@ class DevicesPage(QWidget):
             bt = QTableWidgetItem("paired" if r.paired else "not paired")
             bt.setForeground(QColor(GOOD if r.paired else MUTED))
             t.setItem(i, 3, bt)
+            level, short, why = fwmod.assess(r.firmware)
+            fw = QTableWidgetItem(short)
+            fw.setForeground(QColor({fwmod.OLD: WARNING, fwmod.NOT_STREAMING: CRITICAL,
+                                     fwmod.NEWER_EXISTS: MUTED, fwmod.UNKNOWN: MUTED}.get(level, "#1f1f1e")))
+            fw.setToolTip(f"{r.firmware}\n\n{why}" if r.firmware else why)
+            t.setItem(i, 4, fw)
             text, color = self._status_of(r)
             st = QTableWidgetItem(text)
             st.setForeground(QColor(color))
             st.setToolTip(text)
-            t.setItem(i, 4, st)
+            t.setItem(i, 5, st)
             if r.paired:
                 gear = _button("⚙ Settings", TIPS["settings"], "small")
                 gear.setEnabled(r.mac not in self.busy and not self.base.setting_up and r.mac not in self._sd_macs)
                 gear.clicked.connect(lambda _=False, mac=r.mac, nm=r.name: self._settings(mac, nm))
-                t.setCellWidget(i, 5, gear)
+                t.setCellWidget(i, 6, gear)
             else:
-                t.removeCellWidget(i, 5)
-                t.setItem(i, 5, QTableWidgetItem(""))
+                t.removeCellWidget(i, 6)
+                t.setItem(i, 6, QTableWidgetItem(""))
         t.blockSignals(False)
         self._update_buttons()
 

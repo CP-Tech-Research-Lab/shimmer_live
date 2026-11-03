@@ -23,7 +23,7 @@ def page(tmp_path):
 
 def cells(page):
     t = page.table
-    return {t.item(r, 1).text(): (t.item(r, 2).text(), t.item(r, 3).text(), t.item(r, 4).text())
+    return {t.item(r, 1).text(): (t.item(r, 2).text(), t.item(r, 3).text(), t.item(r, 5).text())
             for r in range(t.rowCount())}
 
 
@@ -117,3 +117,14 @@ def test_shimmers_recording_on_sd_are_flagged_and_locked(page):
     assert "recording on its SD card" in cells(page)["Shimmer3-8395"][2]
     assert not page.table.item(0, 0).flags() & Qt.ItemIsUserCheckable     # not for live view meanwhile
     assert page.checked_devices() == [] and "in progress" in page.btn_sd.text()
+
+
+def test_firmware_column_flags_old_versions(page):
+    page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]
+    page.cfg.update_device("00:06:66:B9:86:84", name="Shimmer3-8684", last_check={"firmware": "LogAndStream 0.11.0"})
+    page.base.state = "base"
+    page.base.slots = [SlotInfo(2, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)]
+    page._render_all()
+    fw = {page.table.item(r, 1).text(): page.table.item(r, 4) for r in range(page.table.rowCount())}
+    assert fw["Shimmer3-8684"].text() == "0.11.0 ⬆" and "update" in fw["Shimmer3-8684"].toolTip().lower()
+    assert "cannot stream" in fw["Shimmer3-FD15"].toolTip()
