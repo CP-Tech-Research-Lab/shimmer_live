@@ -19,7 +19,8 @@ from .session import probe_device
 log = logging.getLogger("shimmerlive.docksetup")
 
 SHIMMER_PIN = "1234"
-PAIR_ATTEMPTS = 3
+PAIR_ATTEMPTS = 4
+PAIR_BACKOFF_S = 3.0      # 3, 6, 9 s: 0.11 firmware listens only part of the time (seen on 5042, 8341)
 FIND_TIMEOUT_S = 20.0
 TEST_ATTEMPTS = 3            # a single failed test is not proof of a stale pairing
 READY, PROBLEM, SKIPPED = "ready", "problem", "skipped"
@@ -56,7 +57,7 @@ def _pair(backend, dev, ask_user, progress):
         except PairingError as e:
             if not e.retryable or attempt == PAIR_ATTEMPTS:
                 raise
-            time.sleep(1.5)
+            time.sleep(PAIR_BACKOFF_S * attempt)
 
 
 def setup_slot(link, info, backend, cfg, ask_user, progress=lambda text: None) -> SetupResult:

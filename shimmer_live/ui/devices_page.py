@@ -3,6 +3,7 @@ base, Bluetooth scan for Shimmers that are not docked, guide, keypoints and log.
 import concurrent.futures
 import datetime as dt
 import logging
+import time
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -80,6 +81,8 @@ class Row:
     name: str
     paired: bool = False
     slot: int = 0                  # base slot, 0 = not docked
+    base: str = ""                 # serial of the base it is docked in
+    where: str = ""                # e.g. "base slot 3" or "base B · slot 3"
     firmware: str = ""
     can_stream: bool = True
     docked_error: str = ""
@@ -319,15 +322,19 @@ class DevicesPage(QWidget):
         rows = {d.address: Row(d.address, d.name, True, device=d,
                                firmware=(self.cfg.device(d.address).get("last_check") or {}).get("firmware", ""))
                 for d in self._visible(self.paired)}
-        for s in self.base.slots:
-            if not s.occupied:
-                continue
+        order = {}
+        for k, (u, s) in enumerate(self.base.docked()):
+            where = self.base.where(u, s.slot)
             if not s.mac:                                     # docked: being read, or not readable
-                rows[f"slot{s.slot}"] = Row("", "…", slot=s.slot, docked_error=s.error, reading=not s.error)
+                rows[f"{u.serial}/{s.slot}"] = Row("", "…", slot=s.slot, base=u.serial, where=where,
+                                                   docked_error=s.error, reading=not s.error)
+                order[f"{u.serial}/{s.slot}"] = k
                 continue
             r = rows.setdefault(s.mac, Row(s.mac, s.name))
-            r.slot, r.firmware, r.can_stream = s.slot, s.firmware, s.can_stream
-        return sorted(rows.values(), key=lambda r: (r.slot == 0, r.slot, r.name.lower()))
+            r.slot, r.base, r.where, r.firmware, r.can_stream = s.slot, u.serial, where, s.firmware, s.can_stream
+            order[s.mac] = k
+        return sorted(rows.values(), key=lambda r: (r.slot == 0, order.get(r.mac or f"{r.base}/{r.slot}", 0),
+                                                    r.name.lower()))
 
     def _status_of(self, r: Row):
         if r.reading:
@@ -338,7 +345,7 @@ class DevicesPage(QWidget):
             return f"● recording on its SD card (session {sdlog.active(self.cfg)['name']})", CRITICAL
         if r.mac in self.busy:
             return self.busy[r.mac], BLUE
-        res = self.base.results.get(r.slot) if r.slot else None
+        res = self.base.result(r.base, r.slot) if r.slot else None
         if res:
             return res[1], {"busy": BLUE, dock_setup.READY: GOOD, dock_setup.PROBLEM: CRITICAL}.get(res[0], MUTED)
         if r.docked_error:
@@ -351,15 +358,16 @@ class DevicesPage(QWidget):
         return describe_check(self.cfg.device(r.mac).get("last_check"))
 
     def _render_all(self):
-        dev = self.base.device
+        has_base = bool(self.base.units)
         if self.base.state == "checking":
-            self.pill_base.set("looking for a Shimmer base…", "warn")
-        elif dev is None:
+            self.pill_base.set("looking for Shimmer bases…", "warn")
+        elif not has_base:
             self.pill_base.set("no Shimmer base connected", "neutral")
         else:
-            n = sum(s.occupied for s in self.base.slots) if self.base.slots else sum(self.base.occupancy or [])
-            self.pill_base.set(f"{dev.label} · {n} docked" + (" · setting up…" if self.base.setting_up else ""), "good")
-        self.btn_setup.setVisible(dev is not None and self.base.state != "checking")
+            self.pill_base.set(self.base.summary() + (" · setting up…" if self.base.setting_up else ""), "good")
+            self.pill_base.setToolTip("\n".join(f"Base {u.letter}: {u.device.label}, USB serial {u.serial}"
+                                                for u in self.base.ordered()))
+        self.btn_setup.setVisible(has_base and self.base.state != "checking")
         self.rows = self._build_rows()
         if not self.rows:
             self.empty.setText("Looking for Shimmers in a base…" if self.base.state == "checking" or self.base.reading
@@ -395,7 +403,7 @@ class DevicesPage(QWidget):
             name.setToolTip(f"{r.name}\nBluetooth address {r.mac}" + (f"\nfirmware {r.firmware}" if r.firmware else ""))
             t.setItem(i, 1, name)
             unknown = not r.slot and (self.base.state == "checking" or self.base.reading)
-            where = QTableWidgetItem(f"base slot {r.slot}" if r.slot else "checking…" if unknown else "not docked")
+            where = QTableWidgetItem(r.where if r.slot else "checking…" if unknown else "not docked")
             where.setForeground(QColor("#1f1f1e" if r.slot else WARNING if unknown else MUTED))
             if unknown:
                 where.setToolTip("Still reading the base: this Shimmer may be docked")
@@ -456,7 +464,7 @@ class DevicesPage(QWidget):
         return [(r.mac, r.name) for r in self._checked_rows() if r.paired]
 
     def _checked_slots(self):
-        return [r.slot for r in self._checked_rows() if r.slot]
+        return [(r.base, r.slot) for r in self._checked_rows() if r.slot]
 
     def _setup_ticked(self):
         slots = self._checked_slots()
@@ -627,6 +635,7 @@ class DevicesPage(QWidget):
                     log.info("pairing %s attempt %d: %s", dev.name, attempt, e)
                     if not e.retryable or attempt == dock_setup.PAIR_ATTEMPTS:
                         raise
+                    time.sleep(dock_setup.PAIR_BACKOFF_S * attempt)
 
         def paired(_):
             log.info("%s paired", dev.name)

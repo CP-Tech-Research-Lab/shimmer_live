@@ -151,6 +151,7 @@ def probe(monkeypatch):
         return {"ok": True, "kind": "ECG/ExG", "rate_hz": 256.0, "firmware": "LogAndStream 1.0.5",
                 "battery_pct": 90.0, **r}
     monkeypatch.setattr(dock_setup, "probe_device", fake_probe)
+    monkeypatch.setattr(dock_setup, "PAIR_BACKOFF_S", 0)
     return calls
 
 

@@ -304,7 +304,7 @@ class SdPage(QWidget):
     # ---------------- import ----------------
     def _import(self):
         s = self.session
-        if self.base.link is None:
+        if not self.base.units:
             QMessageBox.information(self, "Import from base", "Connect the Shimmer base by USB and wait until "
                                     "the Devices page shows it.")
             return
@@ -314,7 +314,7 @@ class SdPage(QWidget):
                 "recording, their last file may be empty.\n\nImport anyway?") != QMessageBox.Yes:
             return
         wanted = [m for m, d in s["devices"].items() if d.get("state") in (sdlog.RECORDING, sdlog.STOPPED)]
-        slots = {m: self.base.slot_of(m) for m in wanted}
+        slots = {m: self.base.locate(m) for m in wanted}
         missing = [s["devices"][m]["name"] for m, sl in slots.items() if sl is None]
         docked = [m for m, sl in slots.items() if sl is not None]
         if not docked:
@@ -335,7 +335,8 @@ class SdPage(QWidget):
             name = s["devices"][mac]["name"]
             progress("opening its SD card through the base…")
             tmp = Path(tempfile.mkdtemp(prefix="shimmer_sd_"))
-            with self.base.link.lock, sdlog.DockedCard(self.base.link, slots[mac]) as card:
+            where = slots[mac]
+            with where.link.lock, sdlog.DockedCard(where.link, where.slot) as card:
                 files = sdlog.session_files(card, s["name"], s["config_time"])
                 if not files:
                     raise RuntimeError(f"no files of session {s['name']} on its card")
@@ -490,13 +491,14 @@ class SdPage(QWidget):
         if mac in self.progress:
             return self.progress[mac], INFO
         state = d.get("state")
-        slot = self.base.slot_of(mac) if self.base else None
+        found = self.base.locate(mac) if self.base else None
+        slot = found and self.base.where(found.unit, found.slot)
         if state == sdlog.RECORDING:
             if slot is not None:
-                return f"⚠ in base slot {slot.slot}: docked while recording?", CRITICAL
+                return f"⚠ in {slot}: docked while recording?", CRITICAL
             return "● recording", CRITICAL
         if state == sdlog.STOPPED:
-            return (f"■ stopped · in base slot {slot.slot}" if slot else "■ stopped · dock it to import"), GOOD
+            return (f"■ stopped · in {slot}" if slot else "■ stopped · dock it to import"), GOOD
         if state == sdlog.FAILED:
             return "✖ did not start", CRITICAL
         if state == sdlog.IMPORTED:

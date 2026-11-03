@@ -21,6 +21,23 @@ def page(tmp_path):
     p.deleteLater()
 
 
+class FakeLink:
+    def __init__(self):
+        import threading
+        self.lock = threading.RLock()
+
+
+def dock(page, slots, reading=False, serial="SR3VRR8A", letter="A"):
+    """Put a base with these slots on the page (as the watcher would after reading it)."""
+    from shimmer_live.base import BaseDevice
+    from shimmer_live.ui.base_panel import BaseUnit
+    u = page.base.units.get(serial) or BaseUnit(BaseDevice("Base6U", serial, [], "c", "s", 6), FakeLink())
+    u.slots, u.reading, u.letter, u.occupancy = list(slots), reading, letter, [s.occupied for s in slots]
+    page.base.units[serial] = u
+    page.base.state = "base"
+    return u
+
+
 def cells(page):
     t = page.table
     return {t.item(r, 1).text(): (t.item(r, 2).text(), t.item(r, 3).text(), t.item(r, 5).text())
@@ -40,14 +57,12 @@ def test_where_is_unknown_until_the_base_has_been_read(page):
     page.paired = [BtDevice("D8:47:8F:04:BB:C9", "Shimmer3-BBC9", True)]
     page._render_all()
     assert cells(page)["Shimmer3-BBC9"][0] == "checking…"          # base not looked at yet
-    page.base.state, page.base.reading = "base", True
-    page.base.slots = [SlotInfo(1, True)]                           # slot 1 occupied, not read yet
+    u = dock(page, [SlotInfo(1, True)], reading=True)               # slot 1 occupied, not read yet
     page._render_all()
     c = cells(page)
     assert c["Shimmer3-BBC9"][0] == "checking…"                     # it might still be the one in slot 1
     assert c["…"] == ("base slot 1", "not paired", "reading it over USB…")
-    page.base.slots = [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True)]
-    page.base.reading = False
+    dock(page, [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True)])
     page._render_all()
     c = cells(page)
     assert c["Shimmer3-BBC9"][0] == "not docked"                    # now it is known
@@ -57,9 +72,8 @@ def test_where_is_unknown_until_the_base_has_been_read(page):
 
 def test_docked_and_paired_shimmer_appears_once(page):
     page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]
-    page.base.state = "base"
-    page.base.slots = [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True),
-                       SlotInfo(2, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)]
+    dock(page, [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True),
+                SlotInfo(2, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)])
     page._render_all()
     c = cells(page)
     assert list(c) == ["Shimmer3-8684", "Shimmer3-FD15"]
@@ -70,38 +84,35 @@ def test_docked_and_paired_shimmer_appears_once(page):
 def test_setup_runs_only_on_ticked_docked_shimmers(page, monkeypatch):
     from PySide6.QtCore import Qt
     page.backend = object()
-    page.base.state, page.base.link = "base", object()
-    page.base.slots = [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True),
-                       SlotInfo(2, True, "00:06:66:B8:D1:A4", "LogAndStream 0.16.0", True),
-                       SlotInfo(3, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)]
+    dock(page, [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True),
+                SlotInfo(2, True, "00:06:66:B8:D1:A4", "LogAndStream 0.16.0", True),
+                SlotInfo(3, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)])
     page._render_all()
     t = page.table
     assert not page.btn_setup.isEnabled()                            # nothing ticked yet
     assert t.item(0, 0).flags() & Qt.ItemIsUserCheckable              # unpaired but docked: tickable
     assert not t.item(2, 0).flags() & Qt.ItemIsUserCheckable          # SDLog: cannot stream, not tickable
     started = []
-    monkeypatch.setattr(page.base, "setup_all", lambda slots=None: started.append(slots))
+    monkeypatch.setattr(page.base, "setup_all", lambda targets=None: started.append(targets))
     t.item(1, 0).setCheckState(Qt.Checked)                           # tick D1A4 only
     assert page.btn_setup.isEnabled() and page.btn_setup.text().endswith("(1)")
     assert page.checked_devices() == []                              # not paired: not offered to live view
     page.btn_setup.click()
-    assert started == [[2]]
+    assert started == [[("SR3VRR8A", 2)]]
 
 
 def test_refresh_starts_over_from_checking(page, monkeypatch):
     page.cfg.data["devices"] = {"00:06:66:B9:86:84": {"name": "Shimmer3-8684"}}   # no Bluetooth in tests:
     page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]           # paired list comes from here
-    page.base.state = "base"
-    page.base.slots = [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True)]
-    page.base.occupancy = [True]
+    dock(page, [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True)])
     page._render_all()
     assert cells(page)["Shimmer3-8684"][0] == "base slot 1"
     polled = []
     monkeypatch.setattr(page.base, "_poll", lambda: polled.append(1))
     page.btn_refresh.click()
-    assert polled and page.base.state == "checking" and page.base.occupancy is None
+    assert polled and page.base.state == "checking" and page.base.units["SR3VRR8A"].occupancy is None
     assert cells(page)["Shimmer3-8684"][0] == "checking…"
-    assert "looking for a Shimmer base" in page.pill_base.text()
+    assert "looking for Shimmer bases" in page.pill_base.text()
 
 
 def test_shimmers_recording_on_sd_are_flagged_and_locked(page):
@@ -122,9 +133,19 @@ def test_shimmers_recording_on_sd_are_flagged_and_locked(page):
 def test_firmware_column_flags_old_versions(page):
     page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]
     page.cfg.update_device("00:06:66:B9:86:84", name="Shimmer3-8684", last_check={"firmware": "LogAndStream 0.11.0"})
-    page.base.state = "base"
-    page.base.slots = [SlotInfo(2, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)]
+    dock(page, [SlotInfo(2, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)])
     page._render_all()
     fw = {page.table.item(r, 1).text(): page.table.item(r, 4) for r in range(page.table.rowCount())}
     assert fw["Shimmer3-8684"].text() == "0.11.0 ⬆" and "update" in fw["Shimmer3-8684"].toolTip().lower()
     assert "cannot stream" in fw["Shimmer3-FD15"].toolTip()
+
+
+def test_two_bases_are_shown_together(page):
+    dock(page, [SlotInfo(1, True, "00:06:66:B9:86:84", "LogAndStream 0.11.0", True)], serial="SR3VRR8A", letter="A")
+    dock(page, [SlotInfo(1, True, "40:84:32:56:A1:87", "LogAndStream 1.1.3", True),
+                SlotInfo(3, True, error="docked Shimmer did not answer")], serial="SR8YS557", letter="B")
+    page._render_all()
+    c = cells(page)
+    assert c["Shimmer3-8684"][0] == "base A · slot 1" and c["Shimmer3-A187"][0] == "base B · slot 1"
+    assert c["…"][0] == "base B · slot 3"
+    assert "2 Shimmer bases · 3 docked" in page.pill_base.text()

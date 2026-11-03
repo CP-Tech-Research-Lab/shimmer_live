@@ -10,6 +10,7 @@ Base control commands (from Shimmer's SmartDock driver, verified on a Base6U):
     SDQ$      -> Q,<one 0/1 per slot>                          which slots hold a Shimmer
     SDP$      -> P,NN | C                                       active slot (C = none)
     SDP,NN$   -> P,NN                                           route slot NN, without SD access
+    SDC,NN$   -> C,NN                                           route slot NN WITH its SD card (USB drive)
     SDD$      -> D                                              disconnect all slots
 The base also sends S,<map> on its own when a Shimmer is inserted or removed. After routing a
 slot, the Shimmer's UART needs ~1.5 s to settle and the first read may fail (retried).
@@ -286,15 +287,21 @@ def _identify(pid, sn, ports):
             try:
                 occ = link.occupancy()
                 dev.slots = len(occ) or slots
-                first = next((i for i, o in enumerate(occ, start=1) if o), None)
-                if first is None:
+                occupied = [i for i, o in enumerate(occ, start=1) if o]
+                if not occupied:
                     log.info("%s found but no Shimmer docked: cannot tell the Shimmer port yet", kind)
                     return dev
-                link.select(first)
-                for q in reversed(ports):
-                    if q != p and _answers_dock_protocol(q):
-                        dev.shimmer_port = q
+                # A docked Shimmer that is off (or not seated) does not answer: try the next slot.
+                for slot in occupied[:3]:
+                    link.select(slot)
+                    dev.shimmer_port = next((q for q in reversed(ports) if q != p and _answers_dock_protocol(q)), "")
+                    if dev.shimmer_port:
                         break
+                if not dev.shimmer_port and len(ports) == 4:
+                    # No Shimmer answered (all off?): use the 4th port, where every Shimmer base seen so far
+                    # routes the Shimmer UART. A wrong guess only means slots read as "did not answer".
+                    dev.shimmer_port = ports[3]
+                    log.info("%s: no docked Shimmer answered; assuming the Shimmer UART is %s", kind, ports[3])
             finally:
                 link.disconnect()
                 link.close()
