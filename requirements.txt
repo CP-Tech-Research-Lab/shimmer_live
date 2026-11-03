@@ -2,6 +2,7 @@
 pyshimmer>=1.0
 pyserial>=3.5
 numpy>=2.0
+pandas>=2.0
 PySide6>=6.5
 pyqtgraph>=0.13
 
