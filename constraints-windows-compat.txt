@@ -1,0 +1,3 @@
+# Optional fallback for PCs where Windows blocks a newer pandas binary.
+# Not a default requirement or a guarantee of approval by Windows security policy.
+pandas==2.3.3

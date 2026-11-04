@@ -5,9 +5,9 @@ Desktop app (Linux and Windows) to pair Shimmer3 sensors, view their data in rea
 ## Run
 
 - **Linux:** `./run_linux.sh`
-- **Windows:** double-click `run_windows.bat`. It needs Python 3.11+ from python.org, with "Add to PATH" or the `py` launcher.
+- **Windows:** double-click `run_windows.bat`. It needs Python 3.11+ from python.org, with "Add to PATH" or the `py` launcher. See [Windows installation and troubleshooting](WINDOWS.md).
 
-The first run creates `.venv` and installs `requirements.txt`. After that you can also start the app with `python -m shimmer_live` from inside the venv.
+The first run creates `.venv` and installs `requirements.txt`. The Windows launcher validates installation, retries incomplete setup and notices requirement changes; `setup_windows.bat --repair` reruns installation and checks. Each PC creates its own environment. After that you can also start the app with `python -m shimmer_live` from inside the venv.
 
 ## Using it
 
@@ -15,7 +15,7 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
    - *Test connection* reads each Shimmer's firmware, sampling rate, sensors and battery.
    - *Forget pairing* removes this computer's pairing (docked Shimmers can be set up again with one click).
    - *⚙ Settings* connects to the device and shows its firmware, battery and configuration. From there you can change the sampling rate (a preset, or any value typed from 1 to 2048 Hz; the dialog shows the exact rate the device will use, since it divides a 32768 Hz clock by a whole number, e.g. 300 Hz → 32768 ÷ 109 = 300.62 Hz) with an estimate of the Bluetooth load, enabled sensors, ECG/ExG gains, GSR range and device name, and set the device clock to the PC's time. Changes are written to the Shimmer and read back to verify them.
-   - **Shimmers in a base** (fastest way to set them up): when a Shimmer Base or Dock is connected by USB, the app notices it and shows each docked Shimmer in the list with its slot, read over USB (address and firmware). Tick the docked Shimmers you want and press *Set up docked Shimmers*: for each ticked one it pairs it by address (PIN 1234 entered automatically; you're asked only if it's refused), tests the connection and sets its clock, and shows "ready" or the problem in plain words. Logging-only firmware (SDLog) is flagged, since it can't stream. A pairing that exists but no longer works is replaced automatically. On a Base6U with 6 Shimmers: reading the slots takes ~15 s, setup ~7–10 s per Shimmer.
+   - **Shimmers in a base** (fastest way to set them up): when a Shimmer Base or Dock is connected by USB, the app notices it and shows each docked Shimmer in the list with its slot, read over USB (address and firmware). Tick the docked Shimmers you want and press *Set up docked Shimmers*: for each ticked one it pairs it by address (PIN 1234 entered automatically; you're asked only if it's refused), tests the connection and sets its clock, and shows "ready" or the problem in plain words. Logging-only firmware (SDLog) is flagged, since it can't stream. Existing pairings are preserved after connection failures; retry Test connection. Use Forget pairing explicitly if a pairing needs replacing. On a Base6U with 6 Shimmers: reading the slots takes ~15 s, setup ~7–10 s per Shimmer.
    - *Scan for Shimmers* finds Shimmers that aren't in a base. *Pair* pairs one, retrying up to 3 times; the PIN 1234 is entered automatically, and a pop-up asks you only if it is refused. After pairing, the device is tested automatically.
    - Tabs on the right:
      - *Guide:* how to connect a Shimmer, what the LEDs mean, and what to do when a device doesn't respond.
@@ -57,7 +57,7 @@ The first run creates `.venv` and installs `requirements.txt`. After that you ca
    - **Confirmation:** if a Shimmer does not answer after the start command, it is shown as *started, not confirmed*, never as failed, because it may well be recording. *Check status* resolves it, and *Stop* includes it.
    - **Firmware 0.15/0.16:** Bluetooth can lock up right after the SD start. This happened on three RN4678 units in testing, and Shimmer fixed it in 1.00.015. Those units must then be stopped with their own button before docking, and the app warns before starting them.
    - **Short gaps:** gaps of 10–120 ms are normal in SD logs. They appear once a minute, and when the app connects to a logging Shimmer on firmware older than 1.01.009. Only gaps of 1 s or more count as interruptions, and completeness is measured over each Shimmer's own recording period.
-   - **Requirements:** LogAndStream firmware and an SD card. On Linux the card is mounted with `udisksctl`, without root. On Windows it gets a drive letter; this path is untested.
+   - **Requirements:** LogAndStream firmware and an SD card. On Linux the card is mounted with `udisksctl`, without root. On Windows it gets a drive letter; retrieval, parsing and export were verified on one Shimmer3. A clean software-controlled SD start/stop cycle on Windows remains unverified.
 
 **Limits found in testing** (Linux, Intel AX211 Bluetooth, 2 Base6U, 12 Shimmers):
 - **Live streaming:** at most **6 Shimmers at once** on this PC. Linux refuses the 7th with "Too many links". The app reports this, remembers the limit and warns before opening live view with more. Use SD recording for more.
@@ -145,7 +145,7 @@ examples/           recording loader, example plugin
 ## Platform notes
 
 - **Linux:** no root needed. The app opens RFCOMM sockets directly; `rfcomm bind` is not needed. The RFCOMM channel is looked up through SDP (`sdptool`). If that fails, the app tries channels in turn, and caches the result. Settings, logs and user plugins are stored in `~/.config/shimmer_live/`.
-- **Windows:** streaming goes through the outgoing Bluetooth COM port that Windows creates when you pair a Shimmer. Settings, logs and user plugins are stored in `%APPDATA%\ShimmerLive\`. **The Windows code paths (pairing, COM port, shared clock) have not been run on a Windows machine yet.** The rest of the app is shared code and has been tested on Linux.
+- **Windows:** streaming goes through the outgoing Bluetooth COM port that Windows creates when you pair a Shimmer. Settings, logs and user plugins are stored in `%APPDATA%\ShimmerLive\`. Pairing and connections were verified on Windows 11 with an Intel AX201 and eleven docked LogAndStream Shimmers, with up to four streaming simultaneously. One unit later stopped answering on reconnect and required a docked power cycle; long-term reconnect reliability remains unverified. **Connect a desktop PC's external Wi-Fi/Bluetooth antenna even when using Ethernet**: missing antennas caused widespread pairing failures and sample loss on the test PC. Default dependencies remain general; an [optional pandas compatibility profile](WINDOWS.md#optional-pandas-compatibility-fallback) is available for a Windows DLL-blocking issue observed on one PC.
 
 ## Tests
 
