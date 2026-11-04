@@ -3,6 +3,7 @@ from dataclasses import replace
 
 from PySide6.QtCore import QRegularExpression, Qt
 from PySide6.QtGui import QDoubleValidator, QRegularExpressionValidator
+from pyshimmer.dev.channels import ESensorGroup
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
@@ -175,8 +176,30 @@ class DeviceSettingsDialog(QDialog):
             self.sensor_boxes[sensor] = cb
             grid.addWidget(cb, i // 2, i % 2)
         gv.addLayout(grid)
+        self.ppg_box = QCheckBox("PPG optical probe (GSR+): enable A13 and 3 V power together")
+        self.ppg_box.setToolTip("Use for the optical pulse probe plugged into a Shimmer3 GSR+ board. "
+                               "The app remembers this choice for this device on this PC. "
+                               "Turning it off leaves the ADC and shared power settings available separately.")
+        self.ppg_box.setChecked(s.ppg_enabled)
+        gv.addWidget(self.ppg_box)
+        self.power_box = QCheckBox("3 V expansion power — supplies the probe during acquisition")
+        self.power_box.setToolTip("Read from the Shimmer and verified after Apply. "
+                                 "Required for PPG; a partly checked box means the current state could not be read.")
+        self.power_box.setTristate(s.expansion_power is None)
+        self.power_box.setCheckState(Qt.PartiallyChecked if s.expansion_power is None else
+                                     Qt.Checked if s.expansion_power else Qt.Unchecked)
+        gv.addWidget(self.power_box)
+        note = QLabel("PPG needs A13 and 3 V power. Apply changes always rewrites the PPG power setting, "
+                      "even if it already reads ON. It is also rewritten before live streaming and SD recording. "
+                      "The probe lights during acquisition, not while idle in Settings. "
+                      "For EDA too, select GSR (GSR+ board). No external power supply is needed.")
+        note.setWordWrap(True)
+        set_role(note, "muted")
+        gv.addWidget(note)
         for sensor, cb in self.sensor_boxes.items():
             cb.toggled.connect(lambda on, sn=sensor: self._sensor_toggled(sn, on))
+        self.ppg_box.toggled.connect(self._ppg_toggled)
+        self._ppg_toggled(self.ppg_box.isChecked())
         v.addWidget(g)
 
         self.gain_combos = {}
@@ -219,7 +242,16 @@ class DeviceSettingsDialog(QDialog):
                 other = b if a == sensor else a if b == sensor else None
                 if other is not None and self.sensor_boxes[other].isChecked():
                     self.sensor_boxes[other].setChecked(False)
+        if sensor == ESensorGroup.CH_A13 and not on:
+            self.ppg_box.setChecked(False)
         self._update_load()
+
+    def _ppg_toggled(self, on):
+        if on:
+            self.sensor_boxes[ESensorGroup.CH_A13].setChecked(True)
+            self.power_box.setTristate(False)
+            self.power_box.setChecked(True)
+        self.power_box.setEnabled(not on)
 
     def _selected_sensors(self):
         return frozenset(s for s, cb in self.sensor_boxes.items() if cb.isChecked())
@@ -273,7 +305,10 @@ class DeviceSettingsDialog(QDialog):
                                           gains=gains)
         return replace(old, name=self.name_edit.text().strip() or old.name, sampling_rate=rate,
                        sensors=self._selected_sensors(), exg_regs=regs,
-                       gsr_range=self.gsr_combo.currentData() if self.gsr_combo else old.gsr_range)
+                       gsr_range=self.gsr_combo.currentData() if self.gsr_combo else old.gsr_range,
+                       ppg_enabled=self.ppg_box.isChecked(),
+                       expansion_power=None if self.power_box.checkState() == Qt.PartiallyChecked
+                       else self.power_box.isChecked())
 
     @staticmethod
     def describe_changes(old, new):
@@ -293,6 +328,13 @@ class DeviceSettingsDialog(QDialog):
                     out.append(f"{EXG_LABELS[(chip, ch)]} gain: × {a} → × {b}")
         if new.gsr_range != old.gsr_range:
             out.append(f"GSR range: {GSR_RANGES.get(old.gsr_range)} → {GSR_RANGES.get(new.gsr_range)}")
+        if new.ppg_enabled != old.ppg_enabled:
+            out.append("Use A13 for PPG (3 V power required)" if new.ppg_enabled else "Stop using the PPG preset")
+        if new.ppg_enabled:
+            out.append("Rewrite and verify PPG power (OFF then ON while idle; ON only during existing acquisition)")
+        if new.expansion_power != old.expansion_power:
+            state = lambda value: "unknown" if value is None else "ON" if value else "OFF"
+            out.append(f"3 V expansion power: {state(old.expansion_power)} → {state(new.expansion_power)}")
         return out
 
     # ---------------- actions ----------------

@@ -13,6 +13,7 @@ import numpy as np
 from pyshimmer import EChannelType, ShimmerBluetooth
 
 from . import clocks
+from .expansion_power import prepare_ppg
 from .conversions import (GSR_NO_CONTACT_US, battery_percent, build_specs, device_kind,
                           exg_saturated)
 from .transport import AdapterFull, DeviceUnreachable, open_link, quiesce
@@ -217,6 +218,7 @@ class ShimmerSession:
                     "battery_pct": self.battery_pct})
             elif [s.chan for s in self.specs] != [c for c in chans if c != EChannelType.TIMESTAMP]:
                 raise RuntimeError("device configuration changed while disconnected - reopen live view")
+            prepare_ppg(dev, self.cfg, self.mac, chans, timed)
             dev.add_stream_callback(self._on_packet)
             self._prev_ts = None
             self._last_rx_ns = clocks.perf_ns()

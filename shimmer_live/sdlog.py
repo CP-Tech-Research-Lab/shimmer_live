@@ -33,6 +33,7 @@ from pyshimmer.bluetooth.bt_const import SET_RWC_COMMAND
 from pyshimmer.reader.shimmer_reader import ShimmerReader
 
 from . import clocks
+from .expansion_power import prepare_ppg
 from .session import timed as _timed
 from .transport import open_link, quiesce
 
@@ -143,6 +144,7 @@ def start_device(mac, cfg, session_name, config_time, progress=lambda text: None
         _rate, _, chans = _timed(conn.dev.get_inquiry, 5.0)
         if not [c for c in chans if c.name != "TIMESTAMP"]:
             raise RuntimeError("has no sensors enabled, so it would record nothing. Turn some on in ⚙ Settings")
+        prepare_ppg(conn.dev, cfg, mac, chans, _timed)
         battery = None
         try:
             battery = _timed(conn.dev.get_battery_state, 5.0, True)

@@ -89,6 +89,17 @@ def test_start_sets_clock_and_name_then_confirms(shimmer, tmp_path):
     assert shimmer["config_time"] == 1793714116 and r["start_offset"]["offset_ms"] == -55.0
 
 
+def test_sd_start_does_not_proceed_if_ppg_power_preparation_fails(shimmer, tmp_path, monkeypatch):
+    def failed_power(*args):
+        raise RuntimeError("Could not verify PPG 3 V power ON")
+
+    monkeypatch.setattr(sdlog, "prepare_ppg", failed_power)
+    with pytest.raises(RuntimeError, match="PPG 3 V power"):
+        sdlog.start_device(MAC, Config(tmp_path / "c.json"), "P_12", 1)
+    assert not shimmer.get("logging")
+    assert not shimmer.get("rtc_set")
+
+
 @pytest.mark.parametrize("state, message", [
     ({"docked": True}, "in the base"),
     ({"logging": True}, "already recording"),

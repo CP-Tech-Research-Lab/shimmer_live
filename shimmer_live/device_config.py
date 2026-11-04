@@ -7,7 +7,7 @@ and verified.
 """
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from pyshimmer import ShimmerBluetooth
 from pyshimmer.bluetooth.bt_commands import ResponseCommand, ShimmerCommand
@@ -15,6 +15,8 @@ from pyshimmer.dev.channels import ChDataTypeAssignment, ESensorGroup, SensorCha
 from pyshimmer.dev.exg import ExGRegister
 
 from .session import timed
+from .expansion_power import (GetExpansionPower as _GetExpansionPower,
+                              SetExpansionPower as _SetExpansionPower, rewrite_ppg_power)
 from .transport import open_link, quiesce
 
 log = logging.getLogger("shimmerlive.config")
@@ -106,6 +108,8 @@ class DeviceSettings:
     sensors: frozenset
     exg_regs: dict = field(default_factory=dict)      # chip -> 10 register bytes
     gsr_range: int | None = None
+    expansion_power: bool | None = None   # None = unreadable, not OFF
+    ppg_enabled: bool = False             # local intent: A13 is used for an optical probe
 
     def exg_gain(self, chip: int, ch: int) -> int:
         return ExGRegister(self.exg_regs[chip]).get_ch_gain(ch)
@@ -227,14 +231,30 @@ class DeviceConfigurator:
                 gsr = self._cmd(_GetGsrRange(), 3.0)
             except Exception as e:
                 log.info("GSR range not readable: %s", e)
-        settings = DeviceSettings(name=name, sampling_rate=rate, sensors=sensors, exg_regs=regs, gsr_range=gsr)
+        power = None
+        try:
+            power = self._cmd(_GetExpansionPower(), 3.0)
+        except Exception as e:
+            log.info("Expansion power not readable: %s", e)
+        ppg = bool(self.cfg.data.get("ppg_inputs", {}).get(self.mac)) and ESensorGroup.CH_A13 in sensors
+        settings = DeviceSettings(name=name, sampling_rate=rate, sensors=sensors, exg_regs=regs, gsr_range=gsr,
+                                  expansion_power=power, ppg_enabled=ppg)
         return DeviceInfo(mac=self.mac, firmware=f"{fw_type.name} {fw_ver.major}.{fw_ver.minor}.{fw_ver.rel}",
                           link=getattr(self._link, "description", ""), battery_pct=batt,
                           experiment_id=exp_id, settings=settings)
 
     def apply(self, old: DeviceSettings, new: DeviceSettings) -> list[str]:
         """Write the differences, read back, and return a list of mismatches (empty = verified)."""
+        if new.ppg_enabled:
+            if ESensorGroup.STRAIN in new.sensors:
+                raise ValueError("PPG A13 conflicts with the strain-gauge input")
+            new = replace(new, sensors=new.sensors | {ESensorGroup.CH_A13}, expansion_power=True)
         d = self._dev
+        if new.ppg_enabled:
+            rewrite_ppg_power(d, timed)
+        elif new.expansion_power is not None:
+            log.info("%s: 3 V expansion power -> %s", self.mac, new.expansion_power)
+            self._cmd(_SetExpansionPower(new.expansion_power))
         if new.sensors != old.sensors:
             log.info("%s: sensors -> %s", self.mac, sorted(s.name for s in new.sensors))
             timed(d.set_sensors, 5.0, list(new.sensors))
@@ -265,6 +285,12 @@ class DeviceConfigurator:
             problems.append("GSR range")
         if got.name != new.name:
             problems.append("device name")
+        if new.expansion_power is not None and got.expansion_power != new.expansion_power:
+            problems.append("3 V expansion power (could not verify)" if got.expansion_power is None
+                            else "3 V expansion power")
+        if not problems:
+            self.cfg.data.setdefault("ppg_inputs", {})[self.mac] = new.ppg_enabled
+            self.cfg.save()
         return problems
 
     def set_clock_to_pc(self):

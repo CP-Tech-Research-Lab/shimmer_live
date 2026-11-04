@@ -11,6 +11,8 @@ The first run creates `.venv` and installs `requirements.txt`. The Windows launc
 
 ## Using it
 
+For a Shimmer3 GSR+ optical pulse probe, select **PPG optical probe** in device Settings. This enables **Internal ADC A13** and **3 V expansion power** together. Every Apply, live-stream start/reconnect and SD-recording start explicitly rewrites and verifies PPG power, even if it already reports ON: OFF then ON while idle, or ON only if acquisition is already running. The probe lights during acquisition, not while idle in Settings. Also enable **GSR (GSR+ board)** for EDA. The PPG choice is remembered per device on this PC; the ADC and power settings are stored on the Shimmer. A13 remains available independently for other analog sensors. In Live data, use the eye and record dot for `INTERNAL_ADC_13 (raw)` to display and save PPG.
+
 1. **Start page (Devices).** Status pills at the top show whether Bluetooth is on and whether a Shimmer Base is connected. **Your Shimmers** lists every Shimmer once, whether it is paired with this computer, docked in the base, or both, with its base slot, pairing state and last test. Tick the ones to stream. Every button explains itself when you hover over it.
    - *Test connection* reads each Shimmer's firmware, sampling rate, sensors and battery.
    - *Forget pairing* removes this computer's pairing (docked Shimmers can be set up again with one click).
