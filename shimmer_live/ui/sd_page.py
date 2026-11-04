@@ -298,6 +298,8 @@ class SdPage(QWidget):
             else:
                 note = "" if res["was_recording"] else ("was not recording any more (docked?)" if res.get("docked")
                                                         else "was not recording any more (stopped with its button?)")
+                if res.get("clock_warning"):
+                    note = "; ".join(filter(None, (note, res["clock_warning"])))
                 self._save_device(mac, state=sdlog.STOPPED, stop=res, error="", note=note)
             self._render()
 

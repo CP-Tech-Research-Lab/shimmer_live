@@ -110,6 +110,33 @@ def test_stop_reports_whether_it_was_still_recording(shimmer, tmp_path):
     assert not sdlog.stop_device(MAC, Config(tmp_path / "c.json"))["was_recording"]
 
 
+def test_clock_read_failure_cannot_prevent_confirmed_stop(shimmer, tmp_path, monkeypatch):
+    shimmer["logging"] = True
+
+    def failed_clock(self, rounds=0):
+        assert not self.st["logging"], "stop must precede optional clock reads"
+        raise TimeoutError("RTC did not answer")
+
+    monkeypatch.setattr(FakeConn, "offset", failed_clock)
+    result = sdlog.stop_device(MAC, Config(tmp_path / "c.json"))
+    assert not shimmer["logging"]
+    assert result["was_recording"] and result["stop_offset"] is None
+    assert "RTC did not answer" in result["clock_warning"]
+
+
+def test_stop_is_not_confirmed_when_device_keeps_logging(shimmer, tmp_path, monkeypatch):
+    shimmer["logging"] = True
+    original_init = FakeConn.__init__
+
+    def stuck_device(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.dev.stop_logging = lambda: None
+
+    monkeypatch.setattr(FakeConn, "__init__", stuck_device)
+    with pytest.raises(RuntimeError, match="still reports recording"):
+        sdlog.stop_device(MAC, Config(tmp_path / "c.json"))
+
+
 def test_card_layout_and_empty_file(tmp_path):
     run = tmp_path / "data" / "P_12_1793714116" / "ecg_8395-000"
     run.mkdir(parents=True)

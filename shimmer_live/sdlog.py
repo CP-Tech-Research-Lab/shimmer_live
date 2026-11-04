@@ -198,17 +198,25 @@ def stop_device(mac, cfg, progress=lambda text: None) -> dict:
     conn = Connection(mac, cfg)
     try:
         st = conn.status()
-        offset = conn.offset()
-        if st["logging"]:
+        was_recording = st["logging"]
+        if was_recording:
             progress("stopping…")
             _timed(conn.dev.stop_logging, 5.0)
             time.sleep(1.5)
             st = conn.status()
             if st["logging"]:
                 raise RuntimeError("still reports recording after the stop command")
-            return {"was_recording": True, "stop_offset": offset, "stopped_unix": time.time()}
-        return {"was_recording": False, "stop_offset": offset, "stopped_unix": time.time(),
-                "docked": st["docked"]}
+        result = {"was_recording": was_recording, "stop_offset": None,
+                  "stopped_unix": time.time(), "docked": st["docked"]}
+        # Stopping takes priority over drift measurement. A failed RTC read must
+        # never prevent the stop command or turn a confirmed stop into a failure.
+        progress("recording stopped; measuring clock offset…")
+        try:
+            result["stop_offset"] = conn.offset()
+        except Exception as e:
+            result["clock_warning"] = f"Stopped, but could not measure the final clock offset: {e}"
+            log.warning("%s: %s", mac, result["clock_warning"])
+        return result
     finally:
         conn.close()
 
