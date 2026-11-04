@@ -40,6 +40,7 @@ NOT_RESPONDING_HINT = (
     "The Shimmer did not answer. Check that:\n"
     "  • it is switched on (slide switch) and the blue LED blinks briefly every 2 s;\n"
     "  • it is within 1-2 m of this computer;\n"
+    "  • a desktop PC's external Wi-Fi/Bluetooth antenna is connected, even when using Ethernet;\n"
     "  • it is not connected to another program or computer (solid blue LED = already connected);\n"
     "  • the battery is not flat (put it in the dock/base).\n"
     "A Shimmer only listens for connections 12.5% of the time, so several attempts are normal.\n"

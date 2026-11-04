@@ -20,8 +20,9 @@ GUIDE_HTML = f"""
     logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
 <li>Ready Shimmers are ticked in <b>Your Shimmers</b>: press <b>Show live data</b>.</li>
 </ol>
-<p>A Shimmer that is <i>paired but will not connect</i> (e.g. it was paired with another computer since) is fixed
-automatically: its old pairing is removed and it is paired again.</p>
+<p>If a paired Shimmer does not connect, setup keeps its pairing: a timeout can mean the radio is
+temporarily busy or unreachable. Retry <b>Test connection</b>. If you need to replace a pairing,
+use <b>Forget pairing</b>, then set it up again.</p>
 
 <h3>Connecting a new Shimmer without a base</h3>
 <ol>
@@ -40,12 +41,16 @@ automatically: its old pairing is removed and it is paired again.</p>
 
 <h3>If a Shimmer does not respond</h3>
 <ul>
+<li><b>Desktop PC antenna:</b> connect the external Wi-Fi/Bluetooth antenna to the PC's rear antenna
+    sockets, even if you use Ethernet. Missing antennas can cause intermittent pairing and lost samples
+    with nearby Shimmers. Position the antenna clear of the metal case.</li>
 <li><b>Try again</b> &mdash; a Shimmer only listens for connections ~12.5% of the time (320 ms out of every 2.56 s),
     so several attempts are normal. The app retries automatically.</li>
 <li>Make sure it is <b>not connected elsewhere</b> (Consensys, a phone, another PC, another copy of this app).</li>
 <li><b>Battery</b>: a flat battery causes erratic behaviour &mdash; put it in the dock/base.</li>
 <li><b>Reset</b>: switch it off and on (or the reset button on the dock), wait for the blue standby blink, retry.</li>
-<li>If it was paired before and now fails: <b>Forget</b> it, scan and pair again.</li>
+<li>If it was paired to another computer since, its saved pairing may need replacing:
+    use <b>Forget pairing</b>, then pair again. A timeout alone does not prove this.</li>
 <li>It must run Bluetooth firmware (<b>LogAndStream</b>); program it with Consensys if needed.</li>
 <li><b>Windows</b>: each paired Shimmer gets an outgoing COM port (Settings &rarr; Bluetooth &rarr; More Bluetooth
     settings &rarr; COM Ports). The app finds it automatically.</li>

@@ -5,7 +5,8 @@ Pairing uses DeviceInformationCustomPairing so a PIN request (legacy pairing, Sh
 RN42 -> 1234) is answered through the application's PIN dialog. After pairing, Windows
 creates the "Standard Serial over Bluetooth link" COM ports used for streaming.
 
-NOTE: written against the WinRT API but not exercised on a Windows machine yet.
+Exercised on Windows 11; connection availability still depends on the radio,
+driver and device firmware. Preserve existing pairings after transient failures.
 """
 import asyncio
 import logging
@@ -56,7 +57,17 @@ class WindowsBackend(BluetoothBackend):
         threading.Thread(target=self._loop.run_forever, daemon=True, name="winrt-loop").start()
 
     def _run(self, coro, timeout=60):
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+        # WinRT operations are awaitables, but are not Python coroutine objects.
+        # run_coroutine_threadsafe rejects them unless wrapped in a coroutine.
+        async def wait_for_result():
+            return await coro
+
+        future = asyncio.run_coroutine_threadsafe(wait_for_result(), self._loop)
+        try:
+            return future.result(timeout)
+        except TimeoutError:
+            future.cancel()
+            raise
 
     def adapter_status(self):
         try:
@@ -131,9 +142,11 @@ class WindowsBackend(BluetoothBackend):
         if info.pairing.is_paired:
             return
         custom = info.pairing.custom
+        log.info("%s: starting Windows pairing", device.name or device.address)
 
         def on_request(sender, args):
             kind = args.pairing_kind
+            log.info("%s: Windows pairing request %s", device.name or device.address, kind.name)
             if kind == DevicePairingKinds.PROVIDE_PIN:
                 deferral = args.get_deferral()
                 try:
@@ -147,12 +160,15 @@ class WindowsBackend(BluetoothBackend):
 
         token = custom.add_pairing_requested(on_request)
         try:
+            # DISPLAY_PIN asks the user to type a generated PIN on the remote device.
+            # Shimmers have no keyboard; RN42 units need PROVIDE_PIN (normally 1234).
             kinds = (DevicePairingKinds.CONFIRM_ONLY | DevicePairingKinds.PROVIDE_PIN |
-                     DevicePairingKinds.CONFIRM_PIN_MATCH | DevicePairingKinds.DISPLAY_PIN)
+                     DevicePairingKinds.CONFIRM_PIN_MATCH)
             result = await custom.pair_async(kinds)
         finally:
             custom.remove_pairing_requested(token)
         status = result.status
+        log.info("%s: Windows pairing result %s", device.name or device.address, status.name)
         if status in (DevicePairingResultStatus.PAIRED, DevicePairingResultStatus.ALREADY_PAIRED):
             return
         name = getattr(status, "name", str(status))

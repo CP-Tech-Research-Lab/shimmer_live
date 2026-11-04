@@ -174,11 +174,14 @@ def test_user_asked_only_when_default_pin_refused(tmp_path, probe):
     assert r.status == "ready" and bt.pins == ["1234", "0000"]
 
 
-def test_stale_pairing_is_replaced_only_after_repeated_failure(tmp_path, probe):
+def test_connection_failure_preserves_pairing_and_can_recover_on_retry(tmp_path, probe):
     probe["results"] = [{"ok": False, "error": "device did not answer"}]
     bt = FakeBackend(paired=True)
     r = dock_setup.setup_slot(FakeLink(), slot(), bt, Config(tmp_path / "c.json"), ask_user=lambda n: None)
-    assert r.status == "ready" and r.details["repaired"] and bt.forgotten == 1
+    assert r.status == "problem" and "Pairing kept" in r.message
+    assert bt.paired and bt.forgotten == 0 and bt.pins == []
+    r = dock_setup.setup_slot(FakeLink(), slot(), bt, Config(tmp_path / "c.json"), ask_user=lambda n: None)
+    assert r.status == "ready" and bt.forgotten == 0 and bt.pins == []
 
 
 def test_working_pairing_is_left_alone(tmp_path, probe):

@@ -4,8 +4,8 @@ Per docked Shimmer:
   1. firmware must be LogAndStream (SDLog cannot stream over Bluetooth)
   2. find it over Bluetooth by the address read from the dock, pair if needed
      (the Shimmer PIN 1234 is tried automatically; the user is asked only if it is refused)
-  3. test the connection (several attempts); if a paired Shimmer still will not connect, its
-     pairing is stale: forget it, pair again and re-test
+  3. test the connection (several attempts); preserve existing pairings on failure because
+     an unreachable or busy radio does not prove that its pairing is stale
   4. set its clock to this PC's time (over USB)
 Each Shimmer ends with one plain-language result line.
 """
@@ -93,24 +93,9 @@ def setup_slot(link, info, backend, cfg, ask_user, progress=lambda text: None) -
 
     progress("testing the connection…")
     result = probe_device(info.mac, dev.name or info.name, cfg, attempts=TEST_ATTEMPTS)
-    repaired = False
-    if not result["ok"] and was_paired:
-        # Paired but will not connect: the two sides disagree about the pairing. Start over.
-        progress("pairing looks stale: forgetting and pairing again…")
-        try:
-            backend.forget(dev)
-            time.sleep(1.0)
-            dev = backend.find([info.mac], FIND_TIMEOUT_S).get(info.mac)
-            if dev is None:
-                return done(PROBLEM, "was removed to re-pair, but is no longer visible over Bluetooth.")
-            _pair(backend, dev, ask_user, progress)
-            repaired = True
-            progress("testing the connection again…")
-            result = probe_device(info.mac, dev.name or info.name, cfg, attempts=TEST_ATTEMPTS)
-        except PairingError as e:
-            return done(PROBLEM, f"re-pairing failed: {e}")
     if not result["ok"]:
-        return done(PROBLEM, f"paired, but the connection test failed: {result.get('error')}")
+        return done(PROBLEM, f"paired, but the connection test failed: {result.get('error')}. "
+                             "Pairing kept; retry Test connection when the device is available.")
     progress("setting its clock…")
     clock_ok = True
     try:
@@ -127,8 +112,8 @@ def setup_slot(link, info, backend, cfg, ask_user, progress=lambda text: None) -
     batt = result.get("battery_pct")
     summary = (f"ready: {result['kind']}, {result['rate_hz']:g} Hz, {result['firmware']}"
                + (f", battery {batt:.0f}%" if batt is not None else "")
-               + (" (old pairing replaced)" if repaired else "" if was_paired else " (newly paired)"))
-    return done(READY, summary, newly_paired=not was_paired, repaired=repaired, clock_set=clock_ok, test=result)
+               + ("" if was_paired else " (newly paired)"))
+    return done(READY, summary, newly_paired=not was_paired, repaired=False, clock_set=clock_ok, test=result)
 
 
 def setup_all(link, infos, backend, cfg, ask_user, on_progress=lambda slot, text: None,

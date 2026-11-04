@@ -254,24 +254,42 @@ def find_rfcomm_channel(mac: str) -> int:
     raise ConnectionError(f"{mac}: no RFCOMM channel answered like a Shimmer")
 
 
-def windows_com_port(mac: str) -> str | None:
+def windows_com_port(mac: str, wait_seconds: float = 0.0) -> str | None:
     """Outgoing SPP COM port Windows assigned to this MAC (hwid contains the address)."""
     from serial.tools import list_ports
     needle = mac.replace(":", "").upper()
-    for p in list_ports.comports():
-        if needle in (p.hwid or "").upper().replace(":", ""):
-            return p.device
-    return None
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        for p in list_ports.comports():
+            if needle in (p.hwid or "").upper().replace(":", ""):
+                return p.device
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(0.5, remaining))
 
 
 def open_link(mac: str, cfg) -> object:
     """Open a raw link to a Shimmer, discovering and caching the RFCOMM channel."""
     mac = mac.upper()
     if sys.platform == "win32":
-        port = windows_com_port(mac)
+        # PairAsync can finish before Windows installs the outgoing SPP port.
+        # Give device installation time to finish before trying raw RFCOMM.
+        port = windows_com_port(mac, wait_seconds=15.0)
         if port:
             try:
-                return SerialPortLink(port)
+                with CONNECT_LOCK:
+                    try:
+                        return SerialPortLink(port)
+                    except OSError:
+                        # The Windows Bluetooth serial driver can time out on the
+                        # first open while waking a paired radio; the next open
+                        # succeeds. Do not discard the pairing or guess channels.
+                        # pyserial wraps WinError(121) in SerialException and
+                        # drops its numeric code, so allow one bounded retry.
+                        log.info("%s: Windows serial open failed; retrying %s", mac, port)
+                        time.sleep(2.0)
+                        return SerialPortLink(port)
             except Exception as e:
                 log.warning("%s: opening %s failed (%s), trying a direct RFCOMM socket", mac, port, e)
         if not hasattr(socket, "BTPROTO_RFCOMM"):
