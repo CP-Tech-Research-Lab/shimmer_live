@@ -40,7 +40,7 @@ def dock(page, slots, reading=False, serial="SR3VRR8A", letter="A"):
 
 def cells(page):
     t = page.table
-    return {t.item(r, 1).text(): (t.item(r, 2).text(), t.item(r, 3).text(), t.item(r, 5).text())
+    return {t.item(r, 1).text(): (t.item(r, 2).text(), t.item(r, 3).text(), t.item(r, 8).text())
             for r in range(t.rowCount())}
 
 
@@ -161,3 +161,19 @@ def test_firmware_button_needs_one_shimmer_in_the_base(page):
     assert page.btn_fw.isEnabled()                                       # docked: can be updated
     page.table.selectRow(names.index("Shimmer3-8395"))
     assert not page.btn_fw.isEnabled()                                   # not in a base
+
+
+def test_old_pairings_are_grey_and_battery_has_its_own_column(page):
+    from shimmer_live.ui.devices_page import IDLE_GREY
+    page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True), BtDevice("40:84:32:56:A1:87", "Shimmer3-A187", True)]
+    page.cfg.update_device("00:06:66:B9:86:84", name="Shimmer3-8684", last_check={
+        "ok": True, "when": "2026-11-03T14:52:00Z", "kind": "ECG/ExG", "rate_hz": 250.1, "battery_pct": 15.0,
+        "channels": ["EXG_ADS1292R_1_CH1_24BIT"], "firmware": "LogAndStream 0.11.0"})
+    dock(page, [SlotInfo(5, True, "40:84:32:56:A1:87", "LogAndStream 1.1.9", True)])
+    page._render_all()
+    rows = {page.table.item(r, 1).text(): r for r in range(page.table.rowCount())}
+    old, docked = rows["Shimmer3-8684"], rows["Shimmer3-A187"]
+    assert page.table.item(old, 1).foreground().color().name() == IDLE_GREY          # old pairing: grey
+    assert page.table.item(docked, 1).foreground().color().name() != IDLE_GREY       # in the base: normal
+    assert page.table.item(old, 7).text() == "15%" and page.table.item(old, 6).text() == "250 Hz"
+    assert page.table.item(old, 8).text().startswith("✔ tested")                       # no longer one long line

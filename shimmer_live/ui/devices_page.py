@@ -32,7 +32,10 @@ log = logging.getLogger("shimmerlive.devices")
 SCAN_SECONDS = 12
 ROW_H = 40
 BLUE = "#1f4e8c"
-COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Firmware", "Status", ""]
+COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Firmware", "Sensors", "Rate", "Battery", "Status", ""]
+C_STATUS, C_GEAR = 8, 9
+IDLE_GREY = "#a6a6a2"         # not docked and not reached recently: probably an old pairing
+RECENT_S = 600
 TIPS = {
     "refresh": "Read again which Shimmers are paired with this computer and, if a base is connected, which are "
                "docked in it.",
@@ -78,6 +81,25 @@ def describe_check(chk: dict | None) -> tuple[str, str]:
         return (f"✔ {chk.get('kind', '')} · {chk.get('rate_hz', 0):.0f} Hz · {chk.get('firmware', '')}{b}"
                 f" · tested {when}"), color
     return f"✖ {chk.get('error', 'failed')} · tested {when}", CRITICAL
+
+
+def check_status(chk: dict | None) -> tuple[str, str]:
+    """Short status for the table (sensors, rate, battery and firmware have their own columns)."""
+    if not chk:
+        return "not tested yet", MUTED
+    when = _local_time(chk.get("when", ""))
+    if chk.get("ok") and chk.get("channels") == []:
+        return "⚠ no sensors enabled: turn some on in ⚙ Settings", WARNING
+    if chk.get("ok"):
+        return f"✔ tested {when}", GOOD
+    return f"✖ {chk.get('error', 'failed')} · tested {when}", CRITICAL
+
+
+def seconds_since(iso: str) -> float:
+    try:
+        return (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))).total_seconds()
+    except (ValueError, TypeError):
+        return float("inf")
 
 
 @dataclass
@@ -184,13 +206,16 @@ class DevicesPage(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setWordWrap(False)
         hh = self.table.horizontalHeader()
-        for i, mode in enumerate((QHeaderView.ResizeToContents,) * 5 + (QHeaderView.Stretch, QHeaderView.ResizeToContents)):
+        for i, mode in enumerate((QHeaderView.ResizeToContents,) * C_STATUS + (QHeaderView.Stretch, QHeaderView.ResizeToContents)):
             hh.setSectionResizeMode(i, mode)
         for i, tip in enumerate(("Tick to stream this Shimmer in live view", "Bluetooth name (hover for its address)",
                                  "Base slot, if the Shimmer is docked", "Whether this computer is paired with it",
                                  "LogAndStream version. ⬆ old: update recommended · ↑ a newer version exists "
                                  "(hover a version for details)",
-                                 "Last test, or setup progress", "Device settings")):
+                                 "Sensors switched on (at the last test; hover for the channels)",
+                                 "Sampling rate (at the last test)", "Battery (at the last test)",
+                                 "Last test, or setup progress. Grey rows: not in a base and not reached in the last "
+                                 "10 minutes", "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.itemChanged.connect(self._on_check_changed)
         self.table.itemSelectionChanged.connect(self._update_buttons)
@@ -363,7 +388,14 @@ class DevicesPage(QWidget):
                 CRITICAL
         if not r.paired:
             return "not paired yet: tick it, then press 'Set up docked Shimmers'", MUTED
-        return describe_check(self.cfg.device(r.mac).get("last_check"))
+        return check_status(self.cfg.device(r.mac).get("last_check"))
+
+    def _is_idle(self, r: Row) -> bool:
+        """Not in a base, not in use and not reached in the last 10 minutes: shown in grey."""
+        if r.slot or not r.mac or r.mac in self.busy or r.mac in self._sd_macs:
+            return False
+        chk = self.cfg.device(r.mac).get("last_check") or {}
+        return not (chk.get("ok") and seconds_since(chk.get("when", "")) < RECENT_S)
 
     def _render_all(self):
         has_base = bool(self.base.units)
@@ -425,19 +457,39 @@ class DevicesPage(QWidget):
                                      fwmod.NEWER_EXISTS: MUTED, fwmod.UNKNOWN: MUTED}.get(level, "#1f1f1e")))
             fw.setToolTip(f"{r.firmware}\n\n{why}" if r.firmware else why)
             t.setItem(i, 4, fw)
+            chk = (self.cfg.device(r.mac).get("last_check") or {}) if r.mac else {}
+            ok = bool(chk.get("ok"))
+            kind = QTableWidgetItem(chk.get("kind", "") if ok else "")
+            kind.setToolTip(", ".join(chk.get("channels", [])) if ok else "")
+            t.setItem(i, 5, kind)
+            rate = QTableWidgetItem(f"{chk['rate_hz']:.0f} Hz" if ok and chk.get("rate_hz") else "")
+            t.setItem(i, 6, rate)
+            batt_pct = chk.get("battery_pct") if ok else None
+            batt = QTableWidgetItem(f"{batt_pct:.0f}%" if batt_pct is not None else "")
+            if batt_pct is not None:
+                batt.setForeground(QColor(CRITICAL if batt_pct < 10 else WARNING if batt_pct < 20 else GOOD))
+                batt.setToolTip(f"at the last test ({_local_time(chk.get('when', ''))})")
+            t.setItem(i, 7, batt)
             text, color = self._status_of(r)
             st = QTableWidgetItem(text)
             st.setForeground(QColor(color))
             st.setToolTip(text)
-            t.setItem(i, 5, st)
+            t.setItem(i, C_STATUS, st)
+            if self._is_idle(r):                     # an old pairing, most likely: keep it out of the way
+                for c in range(C_GEAR):
+                    it = t.item(i, c)
+                    if it is not None:
+                        it.setForeground(QColor(IDLE_GREY))
+                name.setToolTip(name.toolTip() + "\nNot in a base and not reached in the last 10 minutes "
+                                                 "(switched off or far away?)")
             if r.paired:
                 gear = _button("⚙ Settings", TIPS["settings"], "small")
                 gear.setEnabled(r.mac not in self.busy and not self.base.setting_up and r.mac not in self._sd_macs)
                 gear.clicked.connect(lambda _=False, mac=r.mac, nm=r.name: self._settings(mac, nm))
-                t.setCellWidget(i, 6, gear)
+                t.setCellWidget(i, C_GEAR, gear)
             else:
-                t.removeCellWidget(i, 6)
-                t.setItem(i, 6, QTableWidgetItem(""))
+                t.removeCellWidget(i, C_GEAR)
+                t.setItem(i, C_GEAR, QTableWidgetItem(""))
         t.blockSignals(False)
         self._update_buttons()
 
