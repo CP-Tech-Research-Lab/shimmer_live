@@ -506,9 +506,13 @@ def recording_macs(cfg) -> set:
     return {m for m, d in s["devices"].items() if d.get("state") in MAY_RECORD}
 
 
-def add_keypoint(cfg, kp) -> dict:
-    ev = {"type": "keypoint", "name": kp.name, "color": kp.color, "unix_ns": clocks.unix_ns(),
-          "shared_ticks": clocks.shared_clock_ticks()}
+def add_keypoint(cfg, kp, at=None, source="") -> dict:
+    """at: kp_server.now() taken when a TCP message arrived (default: now)."""
+    ev = {"type": "keypoint", "name": kp.name, "color": kp.color,
+          "unix_ns": at["unix_ns"] if at else clocks.unix_ns(),
+          "shared_ticks": at["shared_ticks"] if at else clocks.shared_clock_ticks()}
+    if source:
+        ev["source"] = source
     cfg.data[SESSION_KEY]["keypoints"].append(ev)
     cfg.save()
     return ev

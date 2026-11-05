@@ -1,4 +1,5 @@
 """Main window: devices page and live page in a stack."""
+import concurrent.futures
 import logging
 
 from PySide6.QtCore import Qt, QTimer
@@ -6,10 +7,12 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget
 
 from .. import export
+from .. import keypoints as kpmod
+from .. import kp_server, sdlog
 from ..bt import BackendUnavailable, get_backend
 from .devices_page import DevicesPage
 from .branding import APP_NAME, lab_name
-from .common import fit_to_screen
+from .common import fit_to_screen, ui_call
 from .dialogs import SaveRecordingDialog
 from .icons import app_icon
 from .live_page import LivePage
@@ -48,6 +51,8 @@ class MainWindow(QMainWindow):
         self.devices.open_sd.connect(self._open_sd)
         self.sd.back.connect(self._close_sd)
         self.devices.refresh()
+        self.kp_server = kp_server.KeypointServer(self._tcp_keypoint)
+        self.devices.keypoints.attach_server(self.kp_server)
         QTimer.singleShot(500, self._recover_unsaved)
         full = QShortcut(QKeySequence(Qt.Key_F11), self)
         full.activated.connect(lambda: self.showMaximized() if self.isFullScreen() else self.showFullScreen())
@@ -63,6 +68,32 @@ class MainWindow(QMainWindow):
                 self.showMaximized()
             else:
                 self.resize(min(self.width(), screen.width()), min(self.height(), screen.height()))
+
+    def _tcp_keypoint(self, target, at):
+        """Server thread: mark on the UI thread, answer the other program."""
+        fut = concurrent.futures.Future()
+        ui_call(lambda: fut.set_result(self._mark_from_tcp(target, at)))
+        try:
+            return fut.result(timeout=3)
+        except concurrent.futures.TimeoutError:
+            return "OK pending (the app is busy; marked at the time the message arrived)"
+
+    def _mark_from_tcp(self, target, at):
+        kp = kp_server.resolve(kpmod.load(self.cfg), target)
+        if kp is None:
+            return ("ERR no keypoint on this port" if isinstance(target, int)
+                    else f"ERR unknown keypoint '{target}'")
+        source = f"tcp:{at['port']}"
+        ev = None
+        if self.live.recorder is not None:
+            ev = self.live.mark(kp, at, source)
+        elif sdlog.active(self.cfg):
+            ev = self.sd.mark(kp, at, source)
+        if ev is None:
+            log.info("keypoint '%s' over TCP (port %d) ignored: nothing is recording", kp.name, at["port"])
+            return "ERR not recording"
+        log.info("keypoint '%s' marked over TCP (port %d)", kp.name, at["port"])
+        return f"OK {kp.name} {ev['unix_ns']}"
 
     def _recover_unsaved(self):
         """Offer to save recordings left unsaved because the app closed while recording."""
@@ -103,4 +134,5 @@ class MainWindow(QMainWindow):
                 return
             self.live.stop_recording()
         self.live.stop_now(timeout=8.0)                # send stop-streaming before exiting
+        self.kp_server.stop()
         ev.accept()

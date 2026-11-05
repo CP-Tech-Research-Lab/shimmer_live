@@ -11,7 +11,7 @@
                                                                 formulas are in info.json ("calibration")
                            <device>_Keypoint                    keypoint name at the nearest sample
   <plugin> - <device>.csv  plugin outputs, same three timestamps
-  keypoints.csv            every keypoint with its time on every clock
+  keypoints.csv            every keypoint with its time on every clock and its source (button / tcp:<port>)
   qc.csv                   quality checks
   info.json                notes, devices, plugins, connection events, clocks, app version
   notes.txt                the notes, as plain text
@@ -186,7 +186,8 @@ def analyze(folder) -> Analysis:
     # ---- keypoints table ----
     rows = []
     for ev in kp_events:
-        row = {"Keypoint": ev["name"], "Color": ev["color"], "Timestamp_Unix_CAL": ev["unix_ns"] / 1e6,
+        row = {"Keypoint": ev["name"], "Color": ev["color"], "Source": ev.get("source") or "button",
+               "Timestamp_Unix_CAL": ev["unix_ns"] / 1e6,
                "Timestamp_Shared_CAL": ev["shared_ticks"] * spc}
         for d in a.devices:
             col = f"{d.meta['name']}_Timestamp_CAL"
@@ -318,7 +319,7 @@ def write_zip(a: Analysis, name: str = "", notes: str = "", out_folder=None) -> 
             _write_table(zf, arc, f"{p.meta['device']}_{p.meta['id']}", p.data, p.units)
             files.append(arc)
         kp = a.keypoints if len(a.keypoints) else pd.DataFrame(
-            columns=["Keypoint", "Color", "Timestamp_Unix_CAL", "Timestamp_Shared_CAL"])
+            columns=["Keypoint", "Color", "Source", "Timestamp_Unix_CAL", "Timestamp_Shared_CAL"])
         _write_table(zf, "keypoints.csv", "", kp, None)
         qc_df = pd.DataFrame([asdict(q) for q in a.qc], columns=["device", "signal", "check", "status", "value",
                                                                  "detail"])

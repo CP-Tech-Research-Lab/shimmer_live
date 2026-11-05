@@ -430,14 +430,18 @@ class SdPage(QWidget):
         for b in getattr(self, "kp_buttons", []):
             b.setEnabled(ok)
 
-    def mark(self, kp):
+    def mark(self, kp, at=None, source=""):
+        """Button, key 1-9, or a TCP message (at = the instant it arrived). Returns the event, None if not recording."""
         if not self._can_mark():
-            return
-        self._list_keypoint(sdlog.add_keypoint(self.cfg, kp))
+            return None
+        ev = sdlog.add_keypoint(self.cfg, kp, at, source)
+        self._list_keypoint(ev)
+        return ev
 
     def _list_keypoint(self, ev):
         when = dt.datetime.fromtimestamp(ev["unix_ns"] / 1e9).strftime("%H:%M:%S")
-        self.kp_list.insertItem(0, QListWidgetItem(f"{when}   {ev['name']}"))
+        self.kp_list.insertItem(0, QListWidgetItem(f"{when}   {ev['name']}"
+                                                   + (f"   (from {ev['source']})" if ev.get("source") else "")))
 
     # ---------------- rendering ----------------
     def _render(self):

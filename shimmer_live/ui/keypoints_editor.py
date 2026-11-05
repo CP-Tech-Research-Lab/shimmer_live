@@ -1,11 +1,24 @@
 """Editor for the keypoint list (start page): predefined keypoints plus custom ones."""
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QColorDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
-                               QTableWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QColorDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
+                               QPushButton, QSpinBox, QTableWidget, QVBoxLayout, QWidget)
 
 from .. import keypoints as kpmod
-from .common import MUTED, set_role, style_table
+from .. import kp_server
+from .common import CRITICAL, MUTED, set_role, style_table
+
+TCP_HELP = """<b>Mark keypoints from another program</b> (a stimulus script, a game, Unreal, …).<br>
+Open a TCP connection to this computer and send one line (ending with a newline):<br>
+&nbsp;• to port <b>{b}+N</b>: anything (even an empty line) marks keypoint N of this list<br>
+&nbsp;• to port <b>{b}</b>: the keypoint's name or number, e.g. <code>task start</code><br>
+The time is taken the instant the line arrives. The app answers <code>OK &lt;name&gt; &lt;unix ns&gt;</code>,
+or <code>ERR &lt;reason&gt;</code> if nothing is recording. Works during a live recording and during an
+SD recording. One connection can send many lines.<br><br>
+<b>Examples</b><br>
+Python: <code>socket.create_connection(("127.0.0.1", {b1})).sendall(b"\\n")</code><br>
+Linux shell: <code>echo &gt; /dev/tcp/127.0.0.1/{b1}</code><br>
+PowerShell: <code>(New-Object Net.Sockets.TcpClient("127.0.0.1",{b1})).GetStream().Write([byte[]](10),0,1)</code>"""
 
 
 class KeypointsEditor(QWidget):
@@ -16,12 +29,12 @@ class KeypointsEditor(QWidget):
         lay = QVBoxLayout(self)
         intro = QLabel("Keypoints mark moments during a recording. In live view each one is a button "
                        "(and keys <b>1–9</b> for the first nine); a click draws a line on every plot and is saved "
-                       "with the data of every Shimmer.")
+                       "with the data of every Shimmer. Other programs can mark them too, over TCP (below).")
         intro.setWordWrap(True)
         set_role(intro, "muted")
         lay.addWidget(intro)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Key", "Colour", "Name", ""])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Key", "Colour", "Name", "Port", ""])
         self.table.verticalHeader().setVisible(False)
         style_table(self.table, 42)
         h = self.table.horizontalHeader()
@@ -29,6 +42,7 @@ class KeypointsEditor(QWidget):
         h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(2, QHeaderView.Stretch)
         h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         lay.addWidget(self.table, 1)
         row = QHBoxLayout()
         self.new_name = QLineEdit()
@@ -41,10 +55,88 @@ class KeypointsEditor(QWidget):
         row.addWidget(self.new_name, 1)
         row.addWidget(b)
         lay.addLayout(row)
+        lay.addSpacing(6)
+
+        # ---- keypoints from other programs over TCP ----
+        self.server = None                   # kp_server.KeypointServer, set by the main window
+        st = kp_server.settings(cfg)
+        tcp = QHBoxLayout()
+        self.tcp_on = QCheckBox("Other programs can mark (TCP), ports from")
+        self.tcp_on.setChecked(st["enabled"])
+        self.tcp_on.setToolTip("Another program marks a keypoint by sending a line to a TCP port: hover ⓘ")
+        self.tcp_port = QSpinBox()
+        self.tcp_port.setRange(1024, 65000)
+        self.tcp_port.setValue(st["base_port"])
+        self.tcp_port.setToolTip("First port: it takes keypoint names or numbers; keypoint N listens on this + N")
+        info = set_role(QLabel("ⓘ how"), "muted")
+        info.setToolTip(TCP_HELP.format(b=st["base_port"], b1=st["base_port"] + 1))
+        self.tcp_info = info
+        tcp.addWidget(self.tcp_on)
+        tcp.addWidget(self.tcp_port)
+        tcp.addWidget(info)
+        tcp.addStretch(1)
+        lay.addLayout(tcp)
+        self.tcp_net = QCheckBox("Also from other computers on the network")
+        self.tcp_net.setChecked(st["network"])
+        self.tcp_net.setToolTip("Off: only programs on this computer can mark keypoints. On: any computer that "
+                                "can reach this one (the firewall may ask for permission).")
+        lay.addWidget(self.tcp_net)
+        self.tcp_status = QLabel()
+        self.tcp_status.setWordWrap(True)
+        self.tcp_status.setTextFormat(Qt.RichText)
+        lay.addWidget(self.tcp_status)
+        self.tcp_on.toggled.connect(self._tcp_changed)
+        self.tcp_net.toggled.connect(self._tcp_changed)
+        self.tcp_port.editingFinished.connect(self._tcp_changed)
         self._render()
+
+    # ---------------- TCP ----------------
+    def attach_server(self, server):
+        self.server = server
+        self.apply_tcp()
+
+    def _tcp_changed(self, *_):
+        kp_server.save_settings(self.cfg, enabled=self.tcp_on.isChecked(), base_port=self.tcp_port.value(),
+                                network=self.tcp_net.isChecked())
+        self.apply_tcp()
+
+    def apply_tcp(self):
+        """(Re)start the server for the current keypoint list and settings, and show what listens where."""
+        st = kp_server.settings(self.cfg)
+        b = st["base_port"]
+        self.tcp_info.setToolTip(TCP_HELP.format(b=b, b1=b + 1))
+        self.tcp_port.setEnabled(st["enabled"])
+        self.tcp_net.setEnabled(st["enabled"])
+        if self.server is not None:
+            if st["enabled"]:
+                self.server.start(b, len(self.items), st["network"])
+            else:
+                self.server.stop()
+        self._render()
+        if not st["enabled"]:
+            self.tcp_status.setText(f"<span style='color:{MUTED}'>Off.</span>")
+            return
+        if self.server is None:
+            self.tcp_status.setText("")
+            return
+        text = (f"<span style='color:{MUTED}'>Listening on ports {b}–{b + len(self.items)} "
+                f"({'this computer and the network' if st['network'] else 'this computer only'}). "
+                f"Port {b}: name or number · each keypoint's port is in the table.</span>")
+        if self.server.errors:
+            bad = ", ".join(f"{p} ({why})" for p, why in sorted(self.server.errors.items()))
+            text += (f"<br><span style='color:{CRITICAL}'>Not available: {bad}. Another program (or a second copy "
+                     f"of this app) uses them: choose other ports.</span>")
+        self.tcp_status.setText(text)
+
+    def port_of(self, i):
+        st = kp_server.settings(self.cfg)
+        return st["base_port"] + i + 1 if st["enabled"] else None
 
     def _save(self):
         kpmod.save(self.cfg, self.items)
+        if self.server is not None and self.server.running and len(self.server.ports) + len(self.server.errors) \
+                != len(self.items) + 1:
+            self.apply_tcp()                 # a keypoint added or removed: one port more or less
 
     def _render(self):
         t = self.table
@@ -67,13 +159,22 @@ class KeypointsEditor(QWidget):
                 name.setMaxLength(40)
                 name.editingFinished.connect(lambda i=r, w=name: self._rename(i, w.text()))
             t.setCellWidget(r, 2, name)
+            port = self.port_of(r) if hasattr(self, "tcp_on") else None
+            pl = QLabel(str(port) if port else "—")
+            pl.setAlignment(Qt.AlignCenter)
+            pl.setToolTip(f"Another program marks '{k.name}' by sending a line to TCP port {port}" if port
+                          else "Keypoints over TCP are off")
+            if port and self.server is not None and port in self.server.errors:
+                pl.setStyleSheet(f"color: {CRITICAL};")
+                pl.setToolTip(f"Port {port} is not available: {self.server.errors[port]}")
+            t.setCellWidget(r, 3, pl)
             if k.builtin:
-                t.setCellWidget(r, 3, QLabel(""))
+                t.setCellWidget(r, 4, QLabel(""))
             else:
                 rm = set_role(QPushButton("Remove"), "small")
                 rm.setToolTip(f"Remove the keypoint '{k.name}' (recordings already made keep it)")
                 rm.clicked.connect(lambda _=False, i=r: self._remove(i))
-                t.setCellWidget(r, 3, rm)
+                t.setCellWidget(r, 4, rm)
 
     def _pick_color(self, i):
         c = QColorDialog.getColor(QColor(self.items[i].color), self, f"Colour for '{self.items[i].name}'")

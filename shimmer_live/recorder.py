@@ -163,10 +163,13 @@ class Recorder:
         self._log_event({"type": kind, "device": session.name, "mac": session.mac, "unix_ns": unix_ns,
                          "text": text})
 
-    def keypoint(self, kp) -> dict:
-        """Mark a keypoint now (called from the UI thread)."""
-        ev = {"type": "keypoint", "name": kp.name, "color": kp.color, "unix_ns": clocks.unix_ns(),
-              "shared_ticks": clocks.shared_clock_ticks()}
+    def keypoint(self, kp, at=None, source="") -> dict:
+        """Mark a keypoint now, or at `at` (kp_server.now() taken when a TCP message arrived). UI thread."""
+        ev = {"type": "keypoint", "name": kp.name, "color": kp.color,
+              "unix_ns": at["unix_ns"] if at else clocks.unix_ns(),
+              "shared_ticks": at["shared_ticks"] if at else clocks.shared_clock_ticks()}
+        if source:
+            ev["source"] = source
         self.keypoints.append(ev)
         self._log_event(ev)
         return ev
