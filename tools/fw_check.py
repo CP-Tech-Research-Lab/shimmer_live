@@ -1,7 +1,7 @@
 """Before/after check for a firmware update: does the Shimmer still record the same way?
 
     python tools/fw_check.py record <MAC> <label> [seconds] [--ppg]   e.g. record 60:8A:10:40:F6:6C before
-                                       --ppg: rewrite the PPG probe's 3 V power first, as the app does
+                                       --ppg: make sure the PPG probe's 3 V power setting is ON, as the app does
     python tools/fw_check.py compare <before.json> <after.json>
 
 `record` connects over Bluetooth (pairing first if needed, PIN 1234), reads the Shimmer's
@@ -73,9 +73,9 @@ def record(mac, label, seconds=60.0, ppg=False):
     conn = sdlog.Connection(mac, cfg)
     try:
         settings, chans = _settings(conn)
-        if ppg:                                   # as the app does for a PPG probe: rewrite its 3 V power
-            from shimmer_live.expansion_power import rewrite_ppg_power
-            rewrite_ppg_power(conn.dev, timed)
+        if ppg:                                   # as the app does for a PPG probe: 3 V power setting ON
+            from shimmer_live.expansion_power import ensure_ppg_power
+            ensure_ppg_power(conn.dev, timed)
             settings["ppg_power_rewritten"] = True
         print(f"{settings['firmware']} · {settings['rate_hz']:g} Hz · {', '.join(settings['channels'])}"
               f" · 3 V expansion power: {settings['expansion_power_3v']}")
