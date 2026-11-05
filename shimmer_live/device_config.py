@@ -16,7 +16,7 @@ from pyshimmer.dev.exg import ExGRegister
 
 from .session import timed
 from .expansion_power import (GetExpansionPower as _GetExpansionPower,
-                              SetExpansionPower as _SetExpansionPower, rewrite_ppg_power)
+                              SetExpansionPower as _SetExpansionPower, ensure_ppg_power)
 from .transport import open_link, quiesce
 
 log = logging.getLogger("shimmerlive.config")
@@ -251,7 +251,7 @@ class DeviceConfigurator:
             new = replace(new, sensors=new.sensors | {ESensorGroup.CH_A13}, expansion_power=True)
         d = self._dev
         if new.ppg_enabled:
-            rewrite_ppg_power(d, timed)
+            ensure_ppg_power(d, timed)
         elif new.expansion_power is not None:
             log.info("%s: 3 V expansion power -> %s", self.mac, new.expansion_power)
             self._cmd(_SetExpansionPower(new.expansion_power))

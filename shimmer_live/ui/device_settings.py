@@ -189,9 +189,9 @@ class DeviceSettingsDialog(QDialog):
         self.power_box.setCheckState(Qt.PartiallyChecked if s.expansion_power is None else
                                      Qt.Checked if s.expansion_power else Qt.Unchecked)
         gv.addWidget(self.power_box)
-        note = QLabel("PPG needs A13 and 3 V power. Apply changes always rewrites the PPG power setting, "
-                      "even if it already reads ON. It is also rewritten before live streaming and SD recording. "
-                      "The probe lights during acquisition, not while idle in Settings. "
+        note = QLabel("PPG needs A13 and the 3 V power setting ON. The Shimmer then switches the probe on "
+                      "only while streaming or recording to SD (green LED on), and off otherwise. "
+                      "PPG does not work while the Shimmer is in the base: take it out first. "
                       "For EDA too, select GSR (GSR+ board). No external power supply is needed.")
         note.setWordWrap(True)
         set_role(note, "muted")
@@ -331,7 +331,7 @@ class DeviceSettingsDialog(QDialog):
         if new.ppg_enabled != old.ppg_enabled:
             out.append("Use A13 for PPG (3 V power required)" if new.ppg_enabled else "Stop using the PPG preset")
         if new.ppg_enabled:
-            out.append("Rewrite and verify PPG power (OFF then ON while idle; ON only during existing acquisition)")
+            out.append("Make sure the 3 V power setting is ON (written only if it is OFF), then verify it")
         if new.expansion_power != old.expansion_power:
             state = lambda value: "unknown" if value is None else "ON" if value else "OFF"
             out.append(f"3 V expansion power: {state(old.expansion_power)} → {state(new.expansion_power)}")

@@ -96,6 +96,7 @@ class ShimmerSession:
         self.state_since_ns = clocks.perf_ns()
         self.detail = "waiting"
         self.attempt = 0
+        self.ppg_docked = False         # PPG probe selected but the Shimmer is in a base: no PPG
         self.link_desc = ""
         # filled on first successful connect
         self.specs = None
@@ -218,7 +219,7 @@ class ShimmerSession:
                     "battery_pct": self.battery_pct})
             elif [s.chan for s in self.specs] != [c for c in chans if c != EChannelType.TIMESTAMP]:
                 raise RuntimeError("device configuration changed while disconnected - reopen live view")
-            prepare_ppg(dev, self.cfg, self.mac, chans, timed)
+            self.ppg_docked = bool(prepare_ppg(dev, self.cfg, self.mac, chans, timed).get("docked"))
             dev.add_stream_callback(self._on_packet)
             self._prev_ts = None
             self._last_rx_ns = clocks.perf_ns()

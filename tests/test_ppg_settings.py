@@ -60,7 +60,7 @@ def test_ppg_apply_enables_adc_and_power_and_remembers_intent(tmp_path):
     conf = configurator(tmp_path)
     old = conf.read().settings
     assert not conf.apply(old, replace(old, ppg_enabled=True))
-    assert conf._dev.writes == [False, True]
+    assert conf._dev.writes == [True]                  # only ON, and only because it was OFF
     got = conf.read().settings
     assert got.ppg_enabled and got.expansion_power is True and S.CH_A13 in got.sensors
     assert Config(conf.cfg.path).data["ppg_inputs"][conf.mac]
@@ -72,7 +72,7 @@ def test_ppg_power_must_be_read_back_not_just_acknowledged(tmp_path, reported_po
     old = conf.read().settings
     with pytest.raises((RuntimeError, TimeoutError)):
         conf.apply(old, replace(old, ppg_enabled=True))
-    assert conf._dev.writes[-1] is True  # restoration attempted even if OFF verification fails
+    assert conf._dev.writes == [True]  # ON attempted (never OFF), and the failed check is reported
     assert not conf.cfg.data.get("ppg_inputs", {}).get(conf.mac)
 
 
@@ -151,31 +151,33 @@ def test_unknown_power_is_not_silently_treated_as_off(dialog):
     assert dialog._wanted().expansion_power is None
 
 
-def test_apply_unchanged_ppg_settings_still_rewrites_power(tmp_path):
-    conf = configurator(tmp_path, power=True)
+@pytest.mark.parametrize("power, writes", [(True, []), (False, [True])])
+def test_apply_ppg_only_writes_power_when_it_is_off(tmp_path, power, writes):
+    """The firmware powers the probe during acquisition by itself: never write OFF, never re-write ON."""
+    conf = configurator(tmp_path, power=power)
     conf._dev.sensors.add(S.CH_A13)
     conf.cfg.data['ppg_inputs'] = {conf.mac: True}
     old = conf.read().settings
-    assert not conf.apply(old, replace(old))
-    assert conf._dev.writes == [False, True]
+    assert not conf.apply(old, replace(old, ppg_enabled=True))
+    assert conf._dev.writes == writes
 
 
 def test_unchanged_ppg_settings_are_not_treated_as_nothing_to_apply(dialog):
     dialog.ppg_box.setChecked(True)
     old = dialog._wanted()
-    assert any('Rewrite and verify PPG power' in text for text in dialog.describe_changes(old, old))
+    assert any('3 V power setting is ON' in text for text in dialog.describe_changes(old, old))
 
 
-def test_existing_sd_acquisition_never_gets_power_switched_off(tmp_path):
-    from shimmer_live.expansion_power import rewrite_ppg_power
+def test_power_is_never_switched_off_for_ppg(tmp_path):
+    from shimmer_live.expansion_power import ensure_ppg_power
     conf = configurator(tmp_path, power=True)
     conf._dev.get_status = lambda: [False, True, True, True, False, True, False, False]
-    rewrite_ppg_power(conf._dev, dc.timed)
-    assert conf._dev.writes == [True]
+    ensure_ppg_power(conf._dev, dc.timed)
+    assert conf._dev.writes == []
 
 
 @pytest.mark.parametrize('first', [True, False])
-def test_live_start_and_reconnect_rewrite_power_before_streaming(tmp_path, monkeypatch, first):
+def test_live_start_and_reconnect_keep_power_on_without_rewriting(tmp_path, monkeypatch, first):
     from shimmer_live import session
     from .conftest import make_session
     conf = configurator(tmp_path, power=True)
@@ -192,4 +194,16 @@ def test_live_start_and_reconnect_rewrite_power_before_streaming(tmp_path, monke
     s = make_session(tmp_path, dev.get_inquiry()[2], 256)
     s.cfg.data['ppg_inputs'] = {s.mac: True}
     s._open(first)
-    assert starts == [[False, True]]
+    assert starts == [[]]                              # already ON: nothing written before streaming
+    assert not s.ppg_docked
+
+
+def test_ppg_in_the_base_is_reported(tmp_path):
+    """In a base the probe loses power after acquisition starts: the app must say so."""
+    from shimmer_live.expansion_power import prepare_ppg
+    conf = configurator(tmp_path, power=True)
+    conf._dev.sensors.add(S.CH_A13)
+    conf._dev.get_status = lambda: [True] + [False] * 7               # docked
+    conf.cfg.data['ppg_inputs'] = {conf.mac: True}
+    chans = conf._dev.get_inquiry()[2]
+    assert prepare_ppg(conf._dev, conf.cfg, conf.mac, chans, dc.timed) == {"docked": True}

@@ -687,6 +687,9 @@ class LivePage(QWidget):
                                     ("Retry", s.retry, "Try to connect to this Shimmer again"))
             elif s.state == State.CONNECTING:
                 a[f"conn-{k}"] = ("info", f"Connecting to {s.name}… {s.detail}", None)
+            if s.state == State.STREAMING and getattr(s, "ppg_docked", False):
+                a[f"ppgdock-{k}"] = ("warning", f"{s.name} is in the base: its PPG probe gets no power there "
+                                                f"(green LED off, PPG reads 0). Take it out of the base to use PPG.", None)
             if s.state == State.STREAMING:
                 if s.detail.startswith("reconnected") and s.seconds_in_state() < 10:
                     a[f"recon-{k}"] = ("info", f"{s.name}: {s.detail} — there is a gap in its data.", None)

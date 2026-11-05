@@ -30,30 +30,43 @@ class SetExpansionPower(ShimmerCommand):
         ser.write_command(SET_EXP_POWER, "<B", int(self.enabled))
 
 
-def rewrite_ppg_power(dev, timed):
-    """Rewrite OFF then ON while idle; never cut power during existing acquisition.
+def ensure_ppg_power(dev, timed):
+    """Make sure the Shimmer's 3 V expansion power setting is ON; write it only if it is OFF.
 
-    Readback verifies commands, but never decides whether to skip a write.
-    If the OFF step fails, still attempt to restore and verify ON.
-    """
-    status = timed(dev.get_status, 5.0)
-    acquiring = status[1] or status[3] or status[4]
-
-    def write_and_verify(enabled):
-        timed(dev._process_and_wait, 5.0, SetExpansionPower(enabled))
-        if timed(dev._process_and_wait, 5.0, GetExpansionPower()) is not enabled:
-            raise RuntimeError(f"Could not verify PPG 3 V power {'ON' if enabled else 'OFF'}")
-
+    The firmware itself switches the probe on when streaming/SD logging starts and off when it
+    stops, as long as this setting is ON: the probe LED lights only during acquisition. Nothing
+    is written when the setting is already ON (every write is a configuration save on the Shimmer).
+    Verified on Shimmer3 GSR+ (SR48-4-0, LogAndStream 1.1.9), out of the base.
+    Returns True if it had to be written."""
     try:
-        if not acquiring:
-            write_and_verify(False)
-    finally:
-        write_and_verify(True)
-    log.info("PPG power rewritten and verified: %s", "ON (acquisition active)" if acquiring else "OFF then ON")
+        current = timed(dev._process_and_wait, 5.0, GetExpansionPower())
+    except Exception as e:                                    # noqa: BLE001 - unknown: write ON and verify
+        log.info("PPG power setting not readable (%s): writing ON", e)
+        current = None
+    if current is True:
+        return False
+    timed(dev._process_and_wait, 5.0, SetExpansionPower(True))
+    if timed(dev._process_and_wait, 5.0, GetExpansionPower()) is not True:
+        raise RuntimeError("Could not verify PPG 3 V power ON")
+    log.info("PPG 3 V expansion power setting switched ON")
+    return True
 
 
-def prepare_ppg(dev, cfg, mac, channels, timed):
-    if cfg.data.get("ppg_inputs", {}).get(mac.upper()):
-        if EChannelType.INTERNAL_ADC_13 not in channels:
-            raise RuntimeError("PPG is selected but A13 is disabled; enable PPG in device Settings")
-        rewrite_ppg_power(dev, timed)
+def prepare_ppg(dev, cfg, mac, channels, timed) -> dict:
+    """Before streaming/SD logging with a PPG probe: A13 must be on and the power setting ON.
+
+    Returns {"docked": True} when the Shimmer is in a base or dock: there the probe loses power a
+    second after acquisition starts (LED off, A13 reads 0), so PPG only works out of the base."""
+    if not cfg.data.get("ppg_inputs", {}).get(mac.upper()):
+        return {}
+    if EChannelType.INTERNAL_ADC_13 not in channels:
+        raise RuntimeError("PPG is selected but A13 is disabled; enable PPG in device Settings")
+    ensure_ppg_power(dev, timed)
+    docked = False
+    try:
+        docked = bool(timed(dev.get_status, 5.0)[0])
+    except Exception as e:                                    # noqa: BLE001 - informative only
+        log.info("%s: status not readable: %s", mac, e)
+    if docked:
+        log.warning("%s: PPG does not work while the Shimmer is in the base: take it out", mac)
+    return {"docked": docked}
