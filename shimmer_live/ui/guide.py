@@ -10,50 +10,54 @@ def _dot(*colors):
 B, G, Y, R = "#1e6fd9", "#1b9e3e", "#e0a100", "#d32f2f"
 
 GUIDE_HTML = f"""
-<h3>Fastest: set up Shimmers from the base</h3>
+<h3>Your Shimmers: four groups</h3>
+<p>Every Shimmer appears once, in the group that says what you can do with it right now. Nothing needs a
+scan button: the page finds them by itself.</p>
+<ul>
+<li><b style="color:#1b7a3a">Ready</b> &mdash; paired with this computer, <b>not in a base</b> and switched on nearby.
+    Only these can be ticked for <b>Show live data</b> and <b>Record on SD cards</b>.</li>
+<li><b style="color:#1f4e8c">In the base</b> &mdash; read over USB. Tick them for <b>Set up docked Shimmers</b>
+    (pairing, clock), and update their firmware. They are <b>not</b> used for live data or SD recording
+    (PPG and SD recording do not work in the base): take them out, switched on, and they move to <b>Ready</b>.</li>
+<li><b style="color:#9a6b00">Found nearby, not paired</b> &mdash; a Shimmer switched on near this computer that
+    is not paired yet: press <b>Pair</b> in its row.</li>
+<li><b style="color:#888">Paired, not found</b> (grey) &mdash; switched off, out of range, or connected to another
+    program. Switch it on (blue blink every 2 s) and bring it closer: it moves to <b>Ready</b> at its next
+    check. A successful <b>Test connection</b> (highlight the row) also does it.</li>
+</ul>
+<p><b>How the page finds them:</b> while it is open, it knocks on each paired Shimmer that is not in a base,
+one after the other (a tiny Bluetooth connection request, nothing starts on the Shimmer), and every ~45 s it
+looks briefly for Shimmers that are not paired yet. A switched-on Shimmer answers in about a second; a
+switched-off one takes ~5 s to give up on, so with many switched off it can take up to a minute to reach a
+given one. Ticked Shimmers are checked more often. <i>searching…</i> in the Where column: not checked yet.</p>
+<p>Your ticks are remembered: a Shimmer you ticked earlier is ticked again as soon as it is in <b>Ready</b>.</p>
+
+<h3>Setting up Shimmers from the base (fastest)</h3>
 <ol>
 <li>Put the Shimmers in a <b>Shimmer Base</b> (or Dock) connected to this computer by USB and switch them on.</li>
-<li>They appear in <b>Your Shimmers</b> with their slot (<i>base slot 1, 2, …</i>), read over USB; the status
-    bar at the top shows the base.</li>
-<li>Tick the ones you want and press <b>Set up docked Shimmers</b>. For each ticked one the app pairs it (entering the PIN 1234 for you), tests the
-    connection and sets its clock, then shows <i>ready</i> or what is wrong in plain words. Shimmers with
-    logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
-<li>Ready Shimmers are ticked in <b>Your Shimmers</b>: press <b>Show live data</b>.</li>
+<li>They appear under <b>In the base</b> with their slot (<i>base slot 1, 2, …</i>).</li>
+<li>Tick them and press <b>Set up docked Shimmers</b>. For each ticked one the app pairs it (entering the PIN
+    1234 for you), tests the connection and sets its clock, then shows <i>ready</i> or what is wrong in plain
+    words. Shimmers with logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
+<li>Take them out of the base, switched on: they move to <b>Ready</b>, ticked. Press <b>Show live data</b>
+    or <b>Record on SD cards</b>.</li>
 </ol>
-
-<h3>Which Shimmers can be used</h3>
-<p>While this page is open the app keeps <b>checking your paired Shimmers</b> that are not in a base: it
-knocks on each one in turn (a tiny Bluetooth connection request, without starting anything on the Shimmer).
-A switched-on Shimmer answers in about a second; a switched-off one takes ~5 s to give up on, so with many
-switched off it can take up to a minute to reach a given one. Ticked Shimmers are checked more often. The
-<b>Where</b> column says:</p>
-<ul>
-<li><b>base slot N</b>: in the base &mdash; usable.</li>
-<li><b style="color:#1b9e3e">nearby</b>: it answered &mdash; switched on and in range, usable.</li>
-<li><b>searching…</b>: not checked yet.</li>
-<li><b style="color:#a6a6a2">not found</b> (grey row): switched off, out of range, or connected to another program.
-    It <b>cannot be ticked</b> for <b>Show live data</b> or <b>Record on SD cards</b>. Switch it on
-    (blue blink every 2 s) and bring it closer: it turns bright on its own at its next check.
-    A successful <b>Test connection</b> (highlight the row) also makes it usable.</li>
-</ul>
-<p>Your ticks are remembered: a Shimmer you ticked earlier is ticked again as soon as it is found.</p>
 <p>If a paired Shimmer does not connect, setup keeps its pairing: a timeout can mean the radio is
 temporarily busy or unreachable. Retry <b>Test connection</b>. If you need to replace a pairing,
 use <b>Forget pairing</b>, then set it up again.</p>
 
 <h3>Connecting a new Shimmer without a base</h3>
 <ol>
-<li><b>Charge and switch on.</b> Use the slide switch on the Shimmer. In the dock/base it charges and can still stream.</li>
+<li><b>Charge and switch on.</b> Use the slide switch on the Shimmer.</li>
 <li><b>Check the upper LED:</b> a short <b>blue blink every 2 s</b> {_dot(B)} means it is on and waiting for a connection.
     A <b>solid blue</b> LED means it is <i>already connected</i> to another program or computer &mdash; close that first
     (a Shimmer accepts only one Bluetooth connection).</li>
 <li><b>Bring it close</b> (1&ndash;2 m, line of sight) for pairing.</li>
-<li>Click <b>Scan for Shimmers</b>. It appears as <b>Shimmer3-XXXX</b>, where XXXX are the last 4 characters of the
-    Bluetooth address printed on the Shimmer label.</li>
-<li>Click <b>Pair</b>. If a PIN is requested, the PIN is <b>1234</b>. Newer radios pair without a PIN.</li>
-<li>After pairing the app automatically <b>tests</b> the device (firmware, sampling rate, sensors, battery).
-    The result is shown in <b>Your Shimmers</b>.</li>
-<li>Tick the devices you want and press <b>Show live data</b>.</li>
+<li>Within about a minute it appears under <b>Found nearby, not paired</b> as <b>Shimmer3-XXXX</b>, where XXXX are
+    the last 4 characters of the Bluetooth address printed on the Shimmer label. <b>Refresh</b> looks again at once.</li>
+<li>Press <b>Pair</b> in its row. If a PIN is requested, the PIN is <b>1234</b>. Newer radios pair without a PIN.</li>
+<li>After pairing the app automatically <b>tests</b> it (firmware, sampling rate, sensors, battery) and it
+    moves to <b>Ready</b>, ticked.</li>
 </ol>
 
 <h3>If a Shimmer does not respond</h3>

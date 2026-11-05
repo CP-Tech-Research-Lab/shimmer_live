@@ -1,5 +1,6 @@
 """The Shimmers list never states something it does not know yet (e.g. 'not docked' before the base is read)."""
 import os
+import time
 
 import pytest
 
@@ -42,10 +43,19 @@ def dock(page, slots, reading=False, serial="SR3VRR8A", letter="A"):
     return u
 
 
+def row_of(page, name):
+    return next(i for i, r in enumerate(page.rows) if r.name == name and not r.header)
+
+
+def groups(page):
+    return [r.header for r in page.rows if r.header]
+
+
 def cells(page):
     t = page.table
-    return {t.item(r, 1).text(): (t.item(r, 2).text(), t.item(r, 3).text(), t.item(r, 8).text())
-            for r in range(t.rowCount())}
+    return {t.item(r, 1).text(): (t.item(r, 2).text(), "paired" if page.rows[r].paired else "not paired",
+                                  t.item(r, 7).text())
+            for r in range(t.rowCount()) if not page.rows[r].header}
 
 
 def test_empty_while_looking_then_explains(page):
@@ -93,12 +103,13 @@ def test_setup_runs_only_on_ticked_docked_shimmers(page, monkeypatch):
                 SlotInfo(3, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)])
     page._render_all()
     t = page.table
+    assert groups(page) == ["base"]
     assert not page.btn_setup.isEnabled()                            # nothing ticked yet
-    assert t.item(0, 0).flags() & Qt.ItemIsUserCheckable              # unpaired but docked: tickable
-    assert not t.item(2, 0).flags() & Qt.ItemIsUserCheckable          # SDLog: cannot stream, not tickable
+    assert t.item(row_of(page, "Shimmer3-8684"), 0).flags() & Qt.ItemIsUserCheckable   # unpaired but docked
+    assert not t.item(row_of(page, "Shimmer3-FD15"), 0).flags() & Qt.ItemIsUserCheckable  # SDLog: cannot stream
     started = []
     monkeypatch.setattr(page.base, "setup_all", lambda targets=None: started.append(targets))
-    t.item(1, 0).setCheckState(Qt.Checked)                           # tick D1A4 only
+    t.item(row_of(page, "Shimmer3-D1A4"), 0).setCheckState(Qt.Checked)  # tick D1A4 only
     assert page.btn_setup.isEnabled() and page.btn_setup.text().endswith("(1)")
     assert page.checked_devices() == []                              # not paired: not offered to live view
     page.btn_setup.click()
@@ -139,7 +150,7 @@ def test_firmware_column_flags_old_versions(page):
     page.cfg.update_device("00:06:66:B9:86:84", name="Shimmer3-8684", last_check={"firmware": "LogAndStream 0.11.0"})
     dock(page, [SlotInfo(2, True, "60:8A:10:40:FD:15", "SDLog 0.22.0", False)])
     page._render_all()
-    fw = {page.table.item(r, 1).text(): page.table.item(r, 4) for r in range(page.table.rowCount())}
+    fw = {page.table.item(r, 1).text(): page.table.item(r, 3) for r in range(page.table.rowCount())}
     assert fw["Shimmer3-8684"].text() == "0.11.0 ⬆" and "update" in fw["Shimmer3-8684"].toolTip().lower()
     assert "cannot stream" in fw["Shimmer3-FD15"].toolTip()
 
@@ -180,8 +191,8 @@ def test_old_pairings_are_grey_and_battery_has_its_own_column(page):
     old, docked = rows["Shimmer3-8684"], rows["Shimmer3-A187"]
     assert page.table.item(old, 1).foreground().color().name() == IDLE_GREY          # old pairing: grey
     assert page.table.item(docked, 1).foreground().color().name() != IDLE_GREY       # in the base: normal
-    assert page.table.item(old, 7).text() == "15%" and page.table.item(old, 6).text() == "250 Hz"
-    assert page.table.item(old, 8).text().startswith("✔ ")                             # no longer one long line
+    assert page.table.item(old, 6).text() == "15%" and page.table.item(old, 5).text() == "250 Hz"
+    assert page.table.item(old, 7).text().startswith("✔ ")                             # no longer one long line
 
 
 def test_updated_shimmer_shows_the_restart_reminder_until_it_answers(page):
@@ -197,6 +208,9 @@ class FakeBackend:
     def __init__(self, around):
         self.around, self.asked = around, []
 
+    def discover(self, seconds, on_update):
+        return [BtDevice(a, n, False) for a, n in getattr(self, "unpaired", [])]
+
     def nearby(self, addresses, seconds, should_stop=lambda: False, on_result=None):
         self.asked.append(list(addresses))
         out = {a: a in self.around for a in addresses}
@@ -211,18 +225,21 @@ def test_only_shimmers_found_nearby_or_docked_can_be_ticked(page, monkeypatch):
     monkeypatch.setattr(dpm, "ui_call", lambda fn, *a: fn(*a))
     near, far, docked = "40:84:32:56:A2:81", "00:06:66:B9:86:84", "40:84:32:56:A1:87"
     page.backend, page.presence, page._shown = FakeBackend({near}), True, True
+    page._last_discover = time.monotonic()                              # knock rounds only in this test
     page.paired = [BtDevice(m, n, True) for m, n in ((near, "Shimmer3-A281"), (far, "Shimmer3-8684"),
                                                        (docked, "Shimmer3-A187"))]
     page.cfg.data["selected"] = [near, far, docked]
     dock(page, [SlotInfo(5, True, docked, "LogAndStream 1.1.9", True)])
     page._render_all()
     assert cells(page)["Shimmer3-A281"][0] == "searching…"
-    assert page.checked_devices() == [(docked, "Shimmer3-A187")]       # nothing found yet: only the docked one
+    assert page.checked_devices() == []                 # nothing found yet; docked ones never go live / to SD
+    assert page._checked_slots() == [("SR3VRR8A", 5)]                  # the docked tick is for the setup
     page._presence_scan()
     assert sorted(page.backend.asked[0]) == sorted([near, far])         # docked ones are not searched for
     assert cells(page)["Shimmer3-A281"][0] == "nearby" and cells(page)["Shimmer3-8684"][0] == "not found"
-    assert sorted(m for m, _ in page.checked_devices()) == sorted([near, docked])
-    rows = {page.table.item(r, 1).text(): r for r in range(page.table.rowCount())}
+    assert page.checked_devices() == [(near, "Shimmer3-A281")]
+    assert groups(page) == ["ready", "base", "away"]
+    rows = {r.name: i for i, r in enumerate(page.rows) if not r.header}
     from shimmer_live.ui.devices_page import IDLE_GREY
     assert page.table.item(rows["Shimmer3-8684"], 1).foreground().color().name() == IDLE_GREY
     assert page.table.item(rows["Shimmer3-A281"], 1).foreground().color().name() != IDLE_GREY
@@ -266,3 +283,25 @@ def test_without_presence_support_every_pairing_stays_usable(page):
     page._render_all()                                                  # backend None in this fixture
     assert page.checked_devices() == [("00:06:66:B9:86:84", "Shimmer3-8684")]
     assert cells(page)["Shimmer3-8684"][0] == "not docked"
+
+
+def test_unpaired_shimmer_found_nearby_gets_a_pair_button(page, monkeypatch):
+    import shimmer_live.ui.devices_page as dpm
+    monkeypatch.setattr(dpm, "run_bg", lambda fn, done=None, failed=None, name=None: done(fn()))
+    monkeypatch.setattr(dpm, "ui_call", lambda fn, *a: fn(*a))
+    new, gone = "40:84:32:56:BE:EF", "40:84:32:56:DE:AD"
+    page.backend, page.presence, page._shown = FakeBackend({new}), True, True
+    page.backend.unpaired = [(new, "Shimmer3-BEEF"), (gone, "Shimmer3-DEAD"), ("11:22:33:44:55:66", "JBL GO 2")]
+    page.paired = []
+    page.base.state = "none"
+    page._render_all()
+    page._presence_scan()                              # discovery round: candidates, not shown before they answer
+    assert set(page.candidates) == {new, gone} and not page.rows
+    page._presence_scan()                              # knock round
+    assert groups(page) == ["nearby"] and list(cells(page)) == ["Shimmer3-BEEF"]
+    i = row_of(page, "Shimmer3-BEEF")
+    assert page.table.cellWidget(i, 8).text() == "Pair"
+    assert not page.table.item(i, 0).flags() & dpm.Qt.ItemIsUserCheckable     # pair first
+    for _ in range(2):
+        page._presence_scan()
+    assert gone not in page.candidates                 # never answered: forgotten

@@ -18,7 +18,7 @@ def _collect_garbage_on_main_thread():
     worker thread, where it would destroy leftover Qt widgets and crash Qt at exit."""
     gc.disable()
     yield
-    gc.collect()
+    gc.collect(1)               # young objects after each test (cheap); everything once at the end
 
 
 GSR_CHANNELS = [E.VBATT, E.GSR_RAW]
