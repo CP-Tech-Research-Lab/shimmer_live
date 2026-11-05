@@ -115,16 +115,21 @@ class DeviceSettingsDialog(QDialog):
         body = QWidget()
         v = QVBoxLayout(body)
 
-        g = QGroupBox("Device")
-        f = QFormLayout(g)
-        self.label_edit = QLineEdit(labels.get(self.conf.cfg, self.conf.mac))
+        own = QGroupBox("On this computer (not written to the Shimmer)")
+        of = QFormLayout(own)
+        self._label_at_open = labels.get(self.conf.cfg, self.conf.mac)
+        self.label_edit = QLineEdit(self._label_at_open)
         self.label_edit.setMaxLength(labels.MAX_LEN)
         self.label_edit.setPlaceholderText("e.g. the participant wearing it")
         self.label_edit.setToolTip("Shown in grey next to the Shimmer's name, in live view and in recordings. Kept on "
                                    "this computer only (saved at once): nothing is written to the Shimmer.")
         self.label_edit.editingFinished.connect(
             lambda: labels.set_label(self.conf.cfg, self.conf.mac, self.label_edit.text()))
-        f.addRow("Label:", self.label_edit)
+        of.addRow("Label:", self.label_edit)
+        v.addWidget(own)
+
+        g = QGroupBox("Device")
+        f = QFormLayout(g)
         self.name_edit = QLineEdit(s.name)
         self.name_edit.setMaxLength(NAME_MAX_LEN)
         self.name_edit.setValidator(QRegularExpressionValidator(QRegularExpression(r"[A-Za-z0-9_\-]*")))
@@ -362,8 +367,14 @@ class DeviceSettingsDialog(QDialog):
     def _apply(self):
         old, new = self.info.settings, self._wanted()
         changes = self.describe_changes(old, new)
+        label = labels.set_label(self.conf.cfg, self.conf.mac, self.label_edit.text())
+        label_note = ""
+        if label != self._label_at_open:
+            label_note = (f"Label '{label}' saved on this computer." if label else "Label removed.")
+            self._label_at_open = label
         if not changes and new.exg_regs == old.exg_regs:
-            QMessageBox.information(self, "Device settings", "Nothing to change.")
+            QMessageBox.information(self, "Device settings",
+                                    (label_note + "\n\n" if label_note else "") + "Nothing to change on the Shimmer.")
             return
         if not new.sensors:
             QMessageBox.warning(self, "Device settings", "Enable at least one sensor.")

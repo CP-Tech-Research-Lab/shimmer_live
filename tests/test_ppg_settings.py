@@ -224,3 +224,16 @@ def test_firmware_button_only_for_a_shimmer_in_a_base(tmp_path, monkeypatch, whe
     if where:
         dlg.btn_fw.click()
         assert dlg.wants_firmware                       # settings close first; the update opens afterwards
+
+
+def test_apply_with_only_a_new_label_says_it_was_saved(dialog, monkeypatch):
+    from shimmer_live import labels
+    from shimmer_live.ui import device_settings as ui
+    told = []
+    monkeypatch.setattr(ui.QMessageBox, "information", lambda *a: told.append(a[2]))
+    dialog.label_edit.setText("marco")
+    dialog._apply()
+    assert labels.get(dialog.conf.cfg, dialog.conf.mac) == "marco"
+    assert "Label 'marco' saved on this computer" in told[-1] and "Nothing to change on the Shimmer" in told[-1]
+    dialog._apply()                                            # again: nothing new
+    assert told[-1] == "Nothing to change on the Shimmer."
