@@ -1,7 +1,7 @@
 """Keypoints from other programs over TCP: a message on a port marks a keypoint at that moment.
 
 Ports (base port B, default 4000; keypoint N is the N-th in the Keypoints list):
-  B + N   any line (even empty: "\\n") marks keypoint N
+  B + N   any line (even empty: "\\n") marks keypoint N (B + N is the default: each keypoint's port can be set)
   B       a line with a keypoint's name or number ("task start", "3") marks that keypoint
 
 The time is taken the instant the line arrives, before the app does anything else, so a busy UI does
@@ -50,6 +50,7 @@ class KeypointServer:
         at: now() taken when the line arrived, plus "port"."""
         self.handler = handler
         self.base_port = DEFAULT_BASE_PORT
+        self.targets = {}              # port -> keypoint index (None: the base port, which takes names/numbers)
         self.ports = []                # ports actually listening
         self.errors = {}               # port -> reason it could not listen
         self._thread = None
@@ -59,14 +60,17 @@ class KeypointServer:
     def running(self) -> bool:
         return self._thread is not None
 
-    def start(self, base_port: int, count: int, network: bool = False) -> None:
-        """Listen on base_port .. base_port + count (count = number of keypoints)."""
+    def start(self, base_port: int, ports, network: bool = False) -> None:
+        """Listen on base_port (names / numbers) and on ports[i] for keypoint i (keypoints.tcp_ports)."""
         self.stop()
         self.base_port = base_port
+        self.targets = {base_port: None}
+        for i, p in enumerate(ports):
+            self.targets.setdefault(p, i)
         host = "0.0.0.0" if network else "127.0.0.1"
         sel = selectors.DefaultSelector()
         self.ports, self.errors = [], {}
-        for port in range(base_port, base_port + count + 1):
+        for port in self.targets:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 if sys.platform == "win32":     # SO_REUSEADDR on Windows would let two programs share a port
@@ -152,7 +156,8 @@ class KeypointServer:
     def _answer(self, conn, port, line, at):
         at = dict(at, port=port)
         text = line.decode("utf-8", "replace").strip()
-        target = port - self.base_port - 1 if port != self.base_port else text
+        index = self.targets.get(port)
+        target = index if index is not None else text
         if target == "":
             reply = "ERR send a keypoint name or number"
         else:

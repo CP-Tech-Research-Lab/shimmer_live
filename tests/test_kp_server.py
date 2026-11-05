@@ -38,7 +38,7 @@ def server():
 
     srv = kp_server.KeypointServer(handler)
     base = free_base(len(kps))
-    srv.start(base, len(kps))
+    srv.start(base, [base + 1, base + 2, base + 3])
     yield srv, base, calls
     srv.stop()
 
@@ -85,12 +85,12 @@ def test_time_is_taken_when_the_message_arrives(server):
 def test_busy_port_is_reported_and_stop_frees_ports(server):
     srv, base, calls = server
     other = kp_server.KeypointServer(lambda t, a: "OK")
-    other.start(base, 3)
+    other.start(base, [base + 1, base + 2, base + 3])
     assert set(other.errors) == {base, base + 1, base + 2, base + 3}
     other.stop()
     srv.stop()
     again = kp_server.KeypointServer(lambda t, a: "OK x 1")
-    again.start(base, 3)
+    again.start(base, [base + 1, base + 2, base + 3])
     assert not again.errors
     assert ask(base + 1, b"\n") == ["OK x 1"]
     again.stop()
@@ -107,3 +107,37 @@ def test_sd_keypoint_keeps_the_arrival_time_and_source(tmp_path):
     ev = sdlog.add_keypoint(cfg, Keypoint("task start", "#222"), at, "tcp:4002")
     assert (ev["unix_ns"], ev["shared_ticks"], ev["source"]) == (123, 456, "tcp:4002")
     assert "source" not in sdlog.add_keypoint(cfg, Keypoint("task end", "#333"))
+
+
+def test_each_keypoint_port_can_be_changed_in_the_editor(tmp_path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    widgets = pytest.importorskip("PySide6.QtWidgets")
+    widgets.QApplication.instance() or widgets.QApplication([])
+    from shimmer_live import keypoints as kpmod
+    from shimmer_live.config import Config
+    from shimmer_live.ui import keypoints_editor as ked
+    told = []
+    monkeypatch.setattr(ked.QMessageBox, "information", lambda *a: told.append(a[2]))
+    base = free_base(8)
+    other = base + 40
+    cfg = Config(tmp_path / "c.json")
+    kp_server.save_settings(cfg, base_port=base)
+    ed = ked.KeypointsEditor(cfg)
+    got = []
+    srv = kp_server.KeypointServer(lambda target, at: (got.append(target), "OK")[1])
+    ed.attach_server(srv)
+    try:
+        assert ed.table.cellWidget(0, 3).text() == str(base + 1)
+        ed._set_port(4, str(other))                          # task start -> another port
+        assert kpmod.load(cfg)[4].port == other and other in srv.targets and srv.targets[other] == 4
+        assert base + 5 not in srv.targets                   # its default port is free again
+        assert ask(other, b"\n") == ["OK"] and got[-1] == 4
+        ed._set_port(1, str(other))                          # already used: refused
+        assert told and "already used by 'task start'" in told[-1] and kpmod.load(cfg)[1].port is None
+        ed._set_port(2, str(base))                           # the first port: refused
+        assert "first port" in told[-1]
+        ed._set_port(4, "")                                  # empty: back to the default
+        assert kpmod.load(cfg)[4].port is None and srv.targets[base + 5] == 4
+    finally:
+        srv.stop()

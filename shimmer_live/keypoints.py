@@ -16,6 +16,7 @@ class Keypoint:
     name: str
     color: str
     builtin: bool = False
+    port: int | None = None        # TCP port that marks it (None: the default, first port + its number)
 
 
 def load(cfg) -> list[Keypoint]:
@@ -23,6 +24,11 @@ def load(cfg) -> list[Keypoint]:
     if not stored:
         return [Keypoint(n, c, True) for n, c in DEFAULT_KEYPOINTS]
     return [Keypoint(**k) for k in stored]
+
+
+def tcp_ports(keypoints: list[Keypoint], base_port: int) -> list[int]:
+    """The TCP port of each keypoint: its own if set, else base_port + its number (1, 2, ...)."""
+    return [k.port or base_port + i + 1 for i, k in enumerate(keypoints)]
 
 
 def save(cfg, keypoints: list[Keypoint]) -> None:
