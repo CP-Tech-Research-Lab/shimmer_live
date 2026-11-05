@@ -83,11 +83,20 @@ def describe_check(chk: dict | None) -> tuple[str, str]:
     return f"✖ {chk.get('error', 'failed')} · tested {when}", CRITICAL
 
 
+def _short_time(iso: str) -> str:
+    """'13:16' for today, '03 nov' otherwise (the full time is in the tooltip)."""
+    try:
+        t = dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+    except (ValueError, AttributeError):
+        return iso or "?"
+    return t.strftime("%H:%M") if t.date() == dt.date.today() else t.strftime("%d %b")
+
+
 def check_status(chk: dict | None) -> tuple[str, str]:
     """Short status for the table (sensors, rate, battery and firmware have their own columns)."""
     if not chk:
         return "not tested yet", MUTED
-    when = _local_time(chk.get("when", ""))
+    when = _short_time(chk.get("when", ""))
     if chk.get("ok") and chk.get("channels") == []:
         return "⚠ no sensors enabled: turn some on in ⚙ Settings", WARNING
     if chk.get("ok"):
@@ -238,14 +247,20 @@ class DevicesPage(QWidget):
         self.btn_live.clicked.connect(self._go_live)
         self.btn_fw = _button("Update firmware…", TIPS["firmware"])
         self.btn_fw.clicked.connect(self._update_firmware)
+        # Two rows, so the page fits narrow screens (1440 px logical at 2x scaling): managing Shimmers
+        # above, starting an acquisition below on the right.
         for b in (self.btn_setup, self.btn_test, self.btn_forget, self.btn_fw):
             acts.addWidget(b)
         acts.addStretch(1)
         self.btn_sd = _button("Record on SD cards…", TIPS["sd"])
         self.btn_sd.clicked.connect(self._sd_clicked)
-        acts.addWidget(self.btn_sd)
-        acts.addWidget(self.btn_live)
+        go = QHBoxLayout()
+        go.setSpacing(8)
+        go.addStretch(1)
+        go.addWidget(self.btn_sd)
+        go.addWidget(self.btn_live)
         card.body.addLayout(acts)
+        card.body.addLayout(go)
         lv.addWidget(card, 1)
 
         # ---- Bluetooth scan for Shimmers that are not docked ----
@@ -306,7 +321,7 @@ class DevicesPage(QWidget):
         split.addWidget(tabs)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 2)
-        split.setSizes([860, 520])
+        split.setSizes([1060, 360])          # the Shimmers list needs the width; the guide can be widened
 
         if not backend:
             for b in (self.btn_scan, self.btn_forget, self.btn_power, self.btn_setup):
@@ -476,7 +491,8 @@ class DevicesPage(QWidget):
             text, color = self._status_of(r)
             st = QTableWidgetItem(text)
             st.setForeground(QColor(color))
-            st.setToolTip(text)
+            last = (self.cfg.device(r.mac).get("last_check") or {}).get("when") if r.mac else None
+            st.setToolTip(text + (f"\nlast test: {_local_time(last)}" if last else ""))
             t.setItem(i, C_STATUS, st)
             if self._is_idle(r):                     # an old pairing, most likely: keep it out of the way
                 for c in range(C_GEAR):

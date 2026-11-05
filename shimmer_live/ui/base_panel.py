@@ -107,7 +107,10 @@ class BaseWatcher(QObject):
         self._poll()
 
     def stop(self):
-        self.timer.stop()
+        try:
+            self.timer.stop()
+        except RuntimeError:                  # at exit Qt may already have deleted the timer
+            pass
 
     def rescan(self):
         """Forget what is known and look again from scratch (the Refresh button)."""
