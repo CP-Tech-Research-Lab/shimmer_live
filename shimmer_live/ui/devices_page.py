@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
-                               QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout,
+from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QProgressBar,
+                               QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout,
                                QWidget)
 
 from .. import dock_setup, sdlog
@@ -190,6 +190,8 @@ class DevicesPage(QWidget):
         self._presence_running = False
         self._shown = False
         self._presence_timer = QTimer(self, singleShot=True, timeout=self._presence_scan)
+        self._knock_queue = []                 # this round's knocks, in order: the first is being checked now
+        self._activity = ""                    # "knock" | "discover" | "paused" | "" (between rounds)
         self.base = BaseWatcher(cfg, backend, self._ask_pin)
         self.base.changed.connect(self._render_all)
         self.base.setup_finished.connect(lambda _: self.refresh())
@@ -241,6 +243,20 @@ class DevicesPage(QWidget):
         self.btn_refresh = _button("Refresh", TIPS["refresh"], "small")
         self.btn_refresh.clicked.connect(self._refresh_all)
         card.actions.addWidget(self.btn_refresh, 0, Qt.AlignTop)
+        # ---- what the background search is doing right now (so you know whether to wait) ----
+        act = QHBoxLayout()
+        act.setSpacing(8)
+        self.activity_bar = QProgressBar()
+        self.activity_bar.setRange(0, 0)                    # moving: busy
+        self.activity_bar.setTextVisible(False)
+        self.activity_bar.setFixedSize(90, 10)
+        self.activity_label = set_role(QLabel(""), "muted")
+        self.activity_label.setToolTip("While this page is open the app checks, one after the other, which paired "
+                                       "Shimmers are switched on nearby, and looks for Shimmers not paired yet. "
+                                       "A switched-off Shimmer takes ~5 s to check.")
+        act.addWidget(self.activity_bar)
+        act.addWidget(self.activity_label, 1)
+        card.body.addLayout(act)
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
         self.table.verticalHeader().setVisible(False)
@@ -465,6 +481,7 @@ class DevicesPage(QWidget):
         if self._presence_running or not self.presence:
             return
         if self._presence_should_stop():
+            self._set_activity("paused")
             self._presence_next(2000)
             return
         if time.monotonic() - self._last_discover > DISCOVER_EVERY_S:
@@ -478,6 +495,8 @@ class DevicesPage(QWidget):
             return
         self._presence_running = True
         stop = self._presence_should_stop
+        self._knock_queue = list(want)
+        self._set_activity("knock")
 
         def work():
             return self.backend.nearby(want, PRESENCE_SCAN_S, stop,
@@ -485,6 +504,8 @@ class DevicesPage(QWidget):
 
         def done(answers):
             self._presence_running = False
+            self._knock_queue = []
+            self._set_activity("")
             if answers is None:                            # this computer cannot tell: keep every pairing usable
                 log.info("checking which Shimmers are switched on is not supported here")
                 self.presence = False
@@ -494,17 +515,54 @@ class DevicesPage(QWidget):
 
         def failed(e):
             self._presence_running = False
+            self._knock_queue = []
+            self._set_activity("")
             log.info("checking for Shimmers nearby failed: %s", e)
             self._presence_next(PRESENCE_PAUSE_MS * 3)
 
         run_bg(work, done, failed, "nearby")
 
+    def _to_check(self):
+        """Paired Shimmers that are not docked (the ones the knocks are for)."""
+        return [r for r in self.rows if not r.header and r.paired and not r.slot and r.mac]
+
+    def _set_activity(self, what):
+        self._activity = what
+        self._update_activity()
+
+    def _update_activity(self):
+        """The line above the table: what the background search is doing, so you know whether to wait."""
+        if not self.presence or not self._shown:
+            self.activity_bar.setVisible(False)
+            self.activity_label.setText("")
+            return
+        todo = self._to_check()
+        done = sum(1 for r in todo if r.mac in self.checked)
+        count = f"  ({done} of {len(todo)} paired Shimmers checked)" if todo else ""
+        current = self._knock_queue[0] if self._activity == "knock" and self._knock_queue else None
+        if current:
+            text = f"Checking {self._name_of(current)}…{count}"
+        elif self._activity == "discover":
+            text = "Looking for Shimmers that are not paired yet…"
+        elif self._activity == "paused":
+            text = "Paused while Bluetooth is busy (test, pairing or setup)…"
+        elif todo and done < len(todo):
+            text = f"Checking which Shimmers are switched on…{count}"
+        else:
+            text = ("All checked · checking again every few seconds" if todo else
+                    "Looking for Shimmers every few seconds")
+        busy = bool(current) or self._activity in ("discover", "paused") or bool(todo and done < len(todo))
+        self.activity_bar.setVisible(busy)
+        self.activity_label.setText(text)
+
     def _discover_round(self):
         self._presence_running = True
         self._last_discover = time.monotonic()
+        self._set_activity("discover")
 
         def done(devs):
             self._presence_running = False
+            self._set_activity("")
             paired = {d.address for d in self.paired}
             docked = {s.mac for _, s in self.base.docked() if s.mac}
             for d in devs or []:
@@ -516,6 +574,7 @@ class DevicesPage(QWidget):
 
         def failed(e):
             self._presence_running = False
+            self._set_activity("")
             log.info("looking for Shimmers not paired yet failed: %s", e)
             self._presence_next(PRESENCE_PAUSE_MS)
 
@@ -523,6 +582,8 @@ class DevicesPage(QWidget):
 
     def _knock_result(self, mac, ok):
         """One Shimmer checked: shown at once (not at the end of the round)."""
+        if mac in self._knock_queue:                         # the next one in the queue is being checked now
+            self._knock_queue = self._knock_queue[self._knock_queue.index(mac) + 1:]
         now = time.monotonic()
         self.checked.add(mac)
         self.last_knock[mac] = now
@@ -672,6 +733,7 @@ class DevicesPage(QWidget):
                 t.removeCellWidget(i, C_GEAR)
                 t.setItem(i, C_GEAR, QTableWidgetItem(""))
         t.blockSignals(False)
+        self._update_activity()
         self._update_buttons()
 
     def _where_text(self, r: Row, unknown: bool) -> str:
@@ -683,7 +745,9 @@ class DevicesPage(QWidget):
             return "not docked"
         if self._present(r):
             return "nearby"
-        return "searching…" if r.mac not in self.checked else "not found"
+        if self._knock_queue and self._knock_queue[0] == r.mac and self._activity == "knock":
+            return "checking…"
+        return "waiting…" if r.mac not in self.checked else "not found"
 
     def _where_tip(self, r: Row, unknown: bool) -> str:
         if r.slot:
@@ -696,7 +760,8 @@ class DevicesPage(QWidget):
             return (f"Switched on and in range: it answered {time.monotonic() - self.nearby[r.mac]:.0f} s ago "
                     "(checked again every few seconds)")
         if r.mac not in self.checked:
-            return "Not checked yet: the app is asking the paired Shimmers one after the other"
+            return ("Not checked yet: the app checks the paired Shimmers one after the other (the line above the "
+                    "table shows which one now)")
         return ("Not in a base and it did not answer: switched off, out of range or connected to another program. "
                 "Switch it on (blue blink every 2 s): it turns bright at its next check (switched-off Shimmers "
                 "take ~5 s each to check, so with many of them this can take up to a minute).")
@@ -948,14 +1013,16 @@ class DevicesPage(QWidget):
         super().showEvent(ev)
         self.base.start()                    # watch USB for a base only while this page is visible
         self._shown = True
-        self.checked = set()                 # "searching…" again until each has been checked after coming back
+        self.checked = set()                 # "waiting…" again until each has been checked after coming back
         # paired Shimmers first: the first look for unpaired ones comes ~15 s after the page is shown
         self._last_discover = max(self._last_discover, time.monotonic() - DISCOVER_EVERY_S + 15)
         self._presence_next(300)
 
     def hideEvent(self, ev):
         self.base.stop()
-        self._shown = False                  # a running search stops within half a second (live view needs the radio)
+        self._shown = False
+        self._activity, self._knock_queue = "", []
+        # a running search stops within half a second (live view needs the radio)
         try:
             self._presence_timer.stop()
         except RuntimeError:

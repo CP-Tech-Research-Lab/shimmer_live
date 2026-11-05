@@ -231,7 +231,7 @@ def test_only_shimmers_found_nearby_or_docked_can_be_ticked(page, monkeypatch):
     page.cfg.data["selected"] = [near, far, docked]
     dock(page, [SlotInfo(5, True, docked, "LogAndStream 1.1.9", True)])
     page._render_all()
-    assert cells(page)["Shimmer3-A281"][0] == "searching…"
+    assert cells(page)["Shimmer3-A281"][0] == "waiting…"
     assert page.checked_devices() == []                 # nothing found yet; docked ones never go live / to SD
     assert page._checked_slots() == [("SR3VRR8A", 5)]                  # the docked tick is for the setup
     page._presence_scan()

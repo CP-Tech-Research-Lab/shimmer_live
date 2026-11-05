@@ -29,7 +29,7 @@ scan button: the page finds them by itself.</p>
 one after the other (a tiny Bluetooth connection request, nothing starts on the Shimmer), and every ~45 s it
 looks briefly for Shimmers that are not paired yet. A switched-on Shimmer answers in about a second; a
 switched-off one takes ~5 s to give up on, so with many switched off it can take up to a minute to reach a
-given one. Ticked Shimmers are checked more often. <i>searching…</i> in the Where column: not checked yet.</p>
+given one. Ticked Shimmers are checked more often. The line above the table shows what is being checked right now; in the Where column <i>checking…</i> marks that Shimmer and <i>waiting…</i> one not checked yet.</p>
 <p>Your ticks are remembered: a Shimmer you ticked earlier is ticked again as soon as it is in <b>Ready</b>.</p>
 
 <h3>Setting up Shimmers from the base (fastest)</h3>
