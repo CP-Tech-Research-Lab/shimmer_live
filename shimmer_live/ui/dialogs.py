@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QHBoxLayo
                                QLineEdit, QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QTextBrowser, QVBoxLayout)
 
+from .. import labels
 from .. import clocks, export
 from ..conversions import CALIBRATION_DOC
 from .common import (CRITICAL, FONT_L, FONT_M, GOOD, MUTED, WARNING, fit_to_screen, fmt_duration, run_bg,
@@ -269,7 +270,7 @@ class SaveRecordingDialog(QDialog):
         self.devices.setRowCount(len(a.devices))
         for r, d in enumerate(a.devices):
             st = d.stats
-            vals = [d.meta["name"], f"{d.meta['sampling_rate_hz']:g} Hz", f"{st['samples']:,}",
+            vals = [labels.plain(d.meta["name"], d.meta.get("label", "")), f"{d.meta['sampling_rate_hz']:g} Hz", f"{st['samples']:,}",
                     f"{st['expected_samples']:,}", f"{st['completeness_pct']:.1f} %", str(st["disconnects"]),
                     f"{st['downtime_s']:.1f} s", f"{st['longest_gap_s']:.1f} s"]
             for c, v in enumerate(vals):

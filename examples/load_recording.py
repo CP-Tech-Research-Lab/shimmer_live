@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pandas as pd
 
-TABLES = {"keypoints.csv", "qc.csv"}
+TABLES = {"keypoints.csv", "qc.csv", "devices.csv"}
 
 
 def _lines(data: bytes) -> list:
@@ -58,6 +58,7 @@ def read_plain_csv(data: bytes) -> pd.DataFrame:
 
 def load_recording(path) -> dict:
     """{"devices": {name: df}, "plugins": {name: df}, "units": {file: [...]}, "keypoints": df, "qc": df,
+    "device_list": df (name, label e.g. the participant, address, kind, firmware, rate),
     "info": dict, "notes": str}"""
     out = {"devices": {}, "plugins": {}, "units": {}}
     with zipfile.ZipFile(path) as zf:
@@ -68,8 +69,8 @@ def load_recording(path) -> dict:
         for member in zf.namelist():
             if member in ("info.json", "notes.txt") or not member.endswith(".csv"):
                 continue                     # e.g. sd_raw/: the Shimmers' original SD files (binary)
-            if member in TABLES:
-                out[member[:-4]] = read_plain_csv(zf.read(member))
+            if member in TABLES:            # devices.csv -> "device_list" ("devices" holds the data)
+                out["device_list" if member == "devices.csv" else member[:-4]] = read_plain_csv(zf.read(member))
                 continue
             df, units = read_consensys_csv(zf.read(member))
             out["units"][member] = units
@@ -90,7 +91,8 @@ def summarise(rec: dict) -> None:
         print("Notes:", rec["notes"].replace("\n", "\n       "))
     for d in info["devices"]:
         st = d["stats"]
-        print(f"\n{d['name']} ({d['mac']}, {d['kind']}, {d['sampling_rate_hz']:g} Hz): {st['samples']:,} samples, "
+        who = f"{d['name']} [{d['label']}]" if d.get("label") else d["name"]
+        print(f"\n{who} ({d['mac']}, {d['kind']}, {d['sampling_rate_hz']:g} Hz): {st['samples']:,} samples, "
               f"{st['completeness_pct']:.1f} % complete, {st['disconnects']} connection loss(es)")
         df = rec["devices"].get(d["name"])
         if df is not None:

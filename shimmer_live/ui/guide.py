@@ -31,6 +31,11 @@ looks briefly for Shimmers that are not paired yet. A switched-on Shimmer answer
 switched-off one takes ~5 s to give up on, so with many switched off it can take up to a minute to reach a
 given one. Ticked Shimmers are checked more often. The line above the table shows what is being checked right now; in the Where column <i>checking…</i> marks that Shimmer and <i>waiting…</i> one not checked yet.</p>
 <p>Your ticks are remembered: a Shimmer you ticked earlier is ticked again as soon as it is in <b>Ready</b>.</p>
+<p><b>Labels (e.g. the participant):</b> double-click a Shimmer's name (or use its ⚙ Settings) to give it a
+label, e.g. <i>alberto</i>. It appears in grey next to the name &mdash; <b>Shimmer3-A281</b> <span
+style="color:#8a8a86">(alberto)</span> &mdash; here, in live view, in the SD recording page and in every
+recording (<i>devices.csv</i> and <i>info.json</i> in the ZIP). It stays on this computer: the Shimmer and its
+Bluetooth name are not changed. A recording keeps the label it had when it started.</p>
 <p><b>Battery, sensors, rate:</b> the app reads them by itself from every Shimmer in <b>Ready</b> as soon as it
 gets there and then every 5 minutes (one Shimmer at a time; the Status column says <i>reading battery and
 sensors…</i>). If a reading fails, the last values stay and Status shows why.</p>

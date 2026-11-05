@@ -8,11 +8,12 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QProgressBar,
-                               QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout,
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QMessageBox,
+                               QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QStyle, QStyledItemDelegate,
+                               QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout,
                                QWidget)
 
-from .. import dock_setup, sdlog
+from .. import dock_setup, labels, sdlog
 from .. import firmware as fwmod
 from ..bt import BtDevice, PairingError
 from ..session import probe_device
@@ -157,6 +158,42 @@ class QtLogHandler(logging.Handler):
             logging.getLogger("shimmerlive").removeHandler(self)
 
 
+LABEL_ROLE = Qt.UserRole + 1
+
+
+class NameDelegate(QStyledItemDelegate):
+    """The Shimmer column: its name, then its label (e.g. the participant) in grey and in brackets."""
+
+    def paint(self, painter, option, index):
+        label = index.data(LABEL_ROLE)
+        if not label:
+            return super().paint(painter, option, index)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        name, opt.text = opt.text, ""
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)   # background, selection
+        rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, opt.widget)
+        fg = index.data(Qt.ForegroundRole)
+        selected = bool(opt.state & QStyle.State_Selected)
+        color = opt.palette.highlightedText().color() if selected else (fg.color() if fg else opt.palette.text().color())
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(color)
+        painter.drawText(rect, Qt.AlignVCenter | Qt.AlignLeft, name)
+        painter.setPen(color if selected else QColor(labels.GREY))
+        painter.drawText(rect.adjusted(opt.fontMetrics.horizontalAdvance(name + " "), 0, 0, 0),
+                         Qt.AlignVCenter | Qt.AlignLeft, f"({label})")
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        label = index.data(LABEL_ROLE)
+        if label:
+            size.setWidth(size.width() + option.fontMetrics.horizontalAdvance(f" ({label})"))
+        return size
+
+
 def _button(text, tip, role=None):
     b = QPushButton(text)
     b.setToolTip(tip)
@@ -282,6 +319,8 @@ class DevicesPage(QWidget):
                                  "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.verticalHeader().setMinimumSectionSize(HEADER_H)
+        self.table.setItemDelegateForColumn(1, NameDelegate(self.table))
+        self.table.cellDoubleClicked.connect(self._edit_label)
         self.table.itemChanged.connect(self._on_check_changed)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         card.body.addWidget(self.table, 1)
@@ -695,7 +734,11 @@ class DevicesPage(QWidget):
                            if r.mac and not present else "Still reading it over USB")
             t.setItem(i, 0, chk)
             name = QTableWidgetItem(r.name)
-            name.setToolTip(f"{r.name}\nBluetooth address {r.mac}" + (f"\nfirmware {r.firmware}" if r.firmware else ""))
+            label = labels.get(self.cfg, r.mac)
+            name.setData(LABEL_ROLE, label)
+            name.setToolTip(labels.plain(r.name, label) + f"\nBluetooth address {r.mac}"
+                            + (f"\nfirmware {r.firmware}" if r.firmware else "")
+                            + ("\n\nDouble-click to change its label (e.g. the participant wearing it)" if r.mac else ""))
             t.setItem(i, 1, name)
             unknown = not r.slot and (self.base.state == "checking" or self.base.reading)
             where = QTableWidgetItem(self._where_text(r, unknown))
@@ -757,6 +800,20 @@ class DevicesPage(QWidget):
         t.blockSignals(False)
         self._update_activity()
         self._update_buttons()
+
+    def _edit_label(self, row, col):
+        """Double-click on a Shimmer's name: set its label (e.g. the participant). Only on this computer."""
+        if col != 1 or row >= len(self.rows) or self.rows[row].header or not self.rows[row].mac:
+            return
+        r = self.rows[row]
+        text, ok = QInputDialog.getText(
+            self, "Label", f"Label for {r.name}, e.g. the participant wearing it.\n\nShown next to its name here, in "
+                           f"live view and in recordings. Only on this computer: the Shimmer and its Bluetooth "
+                           f"name do not change. Empty = no label.", text=labels.get(self.cfg, r.mac))
+        if ok:
+            new = labels.set_label(self.cfg, r.mac, text)
+            log.info("%s: label %s", r.name, f"'{new}'" if new else "removed")
+            self._render_table()
 
     def _where_text(self, r: Row, unknown: bool) -> str:
         if r.slot:

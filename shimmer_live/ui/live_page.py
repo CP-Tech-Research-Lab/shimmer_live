@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QSizePolicy, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
+from .. import labels
 from .. import clocks
 from .. import keypoints as kpmod
 from ..plugins.host import PluginHost
@@ -58,6 +59,11 @@ pg.setConfigOptions(antialias=True, background=SURFACE, foreground=MUTED)
 DEVICE_CARD_WIDTH = 340
 
 
+def who(s) -> str:
+    """Name for messages: 'Shimmer3-A281 (alberto)' when the Shimmer has a label."""
+    return labels.plain(s.name, getattr(s, "label", ""))
+
+
 class PlotsView(pg.GraphicsLayoutWidget):
     """The plots: no mouse zoom or pan (each y axis follows its data by itself). A wheel / two-finger scroll
     over them scrolls the list of plots instead."""
@@ -86,8 +92,9 @@ class DeviceCard(QFrame):
         lay.addWidget(sw)
         col = QVBoxLayout()
         col.setSpacing(0)
-        self.title = QLabel(f"<span style='font-size:{FONT_M}pt; font-weight:700'>{session.name}</span>")
-        self.setToolTip(f"{session.name}\nBluetooth address {session.mac}")
+        self.title = QLabel(f"<span style='font-size:{FONT_M}pt; font-weight:700'>"
+                            f"{labels.rich(session.name, getattr(session, 'label', ''))}</span>")
+        self.setToolTip(f"{who(session)}\nBluetooth address {session.mac}")
         self.line = QLabel()
         self.line2 = QLabel()
         self.line2.setStyleSheet(f"color: {MUTED}; font-size: {FONT_S}pt;")
@@ -341,6 +348,8 @@ class LivePage(QWidget):
         self.t0 = clocks.perf_ns()
         self.sessions = [ShimmerSession(mac, name, self.cfg, DEVICE_COLORS[i % len(DEVICE_COLORS)], self.t0)
                          for i, (mac, name) in enumerate(devices)]
+        for s in self.sessions:
+            s.label = labels.get(self.cfg, s.mac)        # e.g. the participant: shown and recorded with it
         self.host = PluginHost(list(plugin_entries))
         self.cards = [DeviceCard(s, self) for s in self.sessions]
         for c in self.cards:
@@ -468,7 +477,7 @@ class LivePage(QWidget):
                 it.widget().deleteLater()
         self.rows = {}
         for s in self.sessions:
-            title = QLabel(f"<span style='color:{s.color}'>●</span> {s.name}")
+            title = QLabel(f"<span style='color:{s.color}'>●</span> {labels.rich(s.name, getattr(s, 'label', ''))}")
             title.setStyleSheet(f"padding-top: 12px; font-size: {FONT_M}pt; font-weight: 700;")
             self.panel_lay.addWidget(title)
             if not s.specs:
@@ -610,7 +619,8 @@ class LivePage(QWidget):
             curve.setClipToView(True)
             curve.setDownsampling(auto=True, method="peak")
             label = f"{b.cls.name}: {spec.label}" if kind == "plugin" else spec.label
-            p.setTitle(f"<span style='color:{INK}'><b>{s.name}</b> — {label}</span>", size=f"{FONT_BASE}pt",
+            p.setTitle(f"<span style='color:{INK}'><b>{labels.rich(s.name, getattr(s, 'label', ''))}</b> — {label}"
+                       f"</span>", size=f"{FONT_BASE}pt",
                        justify="left")
             # The live value floats in the title row's right corner; it is not part of the
             # layout, so updating it never triggers a relayout of the whole plot grid.
@@ -707,7 +717,7 @@ class LivePage(QWidget):
                     self._lost_seen.add(k)
                     QApplication.beep()
                 a[f"lost-{k}"] = ("critical",
-                                  f"{s.name}: CONNECTION LOST {fmt_duration(s.seconds_in_state())} ago — reconnect as "
+                                  f"{who(s)}: CONNECTION LOST {fmt_duration(s.seconds_in_state())} ago — reconnect as "
                                   f"soon as possible: check it is on and bring it closer. Reconnecting automatically "
                                   f"(attempt {s.attempt}).", None)
             else:
@@ -715,35 +725,35 @@ class LivePage(QWidget):
             if s.state == State.FAILED:
                 hint = "" if ("Bluetooth is full" in s.detail or "no sensors" in s.detail) else \
                     " Check it is on (blue LED blinking), close by and not connected elsewhere."
-                a[f"failed-{k}"] = ("critical", f"{s.name}: could not connect — {s.detail}.{hint}",
+                a[f"failed-{k}"] = ("critical", f"{who(s)}: could not connect — {s.detail}.{hint}",
                                     ("Retry", s.retry, "Try to connect to this Shimmer again"))
             if s.state == State.STREAMING and getattr(s, "ppg_docked", False):
-                a[f"ppgdock-{k}"] = ("warning", f"{s.name} is in the base: its PPG probe gets no power there "
+                a[f"ppgdock-{k}"] = ("warning", f"{who(s)} is in the base: its PPG probe gets no power there "
                                                 f"(green LED off, PPG reads 0). Take it out of the base to use PPG.", None)
             if s.state == State.STREAMING:
                 if s.detail.startswith("reconnected") and s.seconds_in_state() < 10:
-                    a[f"recon-{k}"] = ("info", f"{s.name}: {s.detail} — there is a gap in its data.", None)
+                    a[f"recon-{k}"] = ("info", f"{who(s)}: {s.detail} — there is a gap in its data.", None)
                 if s.seconds_in_state() > 5 and s.measured_rate < LOW_RATE_FRACTION * s.rate:
-                    a[f"rate-{k}"] = ("warning", f"{s.name}: receiving only {s.measured_rate:.0f} of "
+                    a[f"rate-{k}"] = ("warning", f"{who(s)}: receiving only {s.measured_rate:.0f} of "
                                                  f"{s.rate:.0f} samples/s — weak Bluetooth link, move it closer.",
                                       None)
                 sat = [sp.label.split(" (")[0] for sp in s.specs or []
                        if sp.key in s.saturated_since and (now - s.saturated_since[sp.key]) > 1e9]
                 if sat:
-                    a[f"sat-{k}"] = ("warning", f"{s.name}: {', '.join(sat)} at full scale — electrode/lead "
+                    a[f"sat-{k}"] = ("warning", f"{who(s)}: {', '.join(sat)} at full scale — electrode/lead "
                                                 f"off or not connected?", None)
                 if s.no_contact_since is not None and (now - s.no_contact_since) > 2e9:
-                    a[f"gsr-{k}"] = ("warning", f"{s.name}: GSR shows no skin contact (&lt; 0.05 µS) — "
+                    a[f"gsr-{k}"] = ("warning", f"{who(s)}: GSR shows no skin contact (&lt; 0.05 µS) — "
                                                 f"check the electrodes.", None)
             if s.battery_pct is not None and s.state in (State.STREAMING, State.LOST):
                 if s.battery_pct < BATTERY_CRIT:
-                    a[f"batt-{k}"] = ("critical", f"{s.name}: battery critically low ({s.battery_pct:.0f}%) — "
+                    a[f"batt-{k}"] = ("critical", f"{who(s)}: battery critically low ({s.battery_pct:.0f}%) — "
                                                   f"it may switch off soon.", None)
                 elif s.battery_pct < BATTERY_WARN:
-                    a[f"batt-{k}"] = ("warning", f"{s.name}: battery low ({s.battery_pct:.0f}%).", None)
+                    a[f"batt-{k}"] = ("warning", f"{who(s)}: battery low ({s.battery_pct:.0f}%).", None)
             for b in self._bindings(s):
                 if b.error:
-                    a[f"plugin-{k}-{b.cls.id}"] = ("warning", f"Plugin {b.cls.name} on {s.name} stopped: {b.error}",
+                    a[f"plugin-{k}-{b.cls.id}"] = ("warning", f"Plugin {b.cls.name} on {who(s)} stopped: {b.error}",
                                                    None)
         rec = self.recorder
         if rec is not None:
@@ -752,7 +762,7 @@ class LivePage(QWidget):
             free = rec.free_disk_bytes()
             if 0 <= free < DISK_WARN_BYTES:
                 a["disk"] = ("warning", f"Low disk space: {free / 1e9:.2f} GB left in {rec.folder}", None)
-            missing = [s.name for s in self.sessions if s.specs and s.mac not in rec.stats]
+            missing = [who(s) for s in self.sessions if s.specs and s.mac not in rec.stats]
             if missing:
                 a["rec-missing"] = ("warning", f"Not part of this recording (connected after it started, or "
                                                f"nothing selected to record): {', '.join(missing)}", None)
@@ -769,10 +779,10 @@ class LivePage(QWidget):
         bg = CRITICAL if self._blink else "#8e0000"
         self.overlay.setStyleSheet(f"QFrame {{ background: {bg}; border-radius: 8px; }}")   # blink
         worst = max(lost, key=lambda s: s.seconds_in_state())
-        names = ", ".join(s.name for s in lost)
+        names = ", ".join(who(s) for s in lost)
         set_if_changed(self.overlay_title, f"⚠  LOST CONNECTION — {names} — "
                                            f"{fmt_duration(worst.seconds_in_state())} and counting")
-        ok = [s.name for s in self.sessions if s.state == State.STREAMING]
+        ok = [who(s) for s in self.sessions if s.state == State.STREAMING]
         set_if_changed(self.overlay_text,
                        f"No data from {names} is being recorded until it reconnects (trying automatically). "
                        f"Still recording: {', '.join(ok) or 'nothing'}. "
@@ -829,7 +839,7 @@ class LivePage(QWidget):
             QMessageBox.warning(self, "Start recording", "Nothing is selected for recording (the dot buttons in "
                                                          "the Signals panel).")
             return
-        nothing = [s.name for s in ready if not record_keys.get(s.mac)
+        nothing = [who(s) for s in ready if not record_keys.get(s.mac)
                    and not any(plugin_outputs.get(b) for b in self._bindings(s))]
         if nothing and len(nothing) < len(ready) and QMessageBox.question(
                 self, "Start recording",
@@ -839,12 +849,12 @@ class LivePage(QWidget):
                 f"\n\nStart without {'it' if len(nothing) == 1 else 'them'}?") != QMessageBox.Yes:
             return
         if not_ready:
-            names = ", ".join(s.name for s in not_ready)
+            names = ", ".join(who(s) for s in not_ready)
             if QMessageBox.question(self, "Start recording",
                                     f"{names} {'is' if len(not_ready) == 1 else 'are'} not connected and will NOT be "
                                     f"part of this recording.\n\nStart anyway?") != QMessageBox.Yes:
                 return
-        lost = [s.name for s in ready if s.state != State.STREAMING]
+        lost = [who(s) for s in ready if s.state != State.STREAMING]
         if lost and QMessageBox.question(self, "Start recording",
                                          f"{', '.join(lost)} currently has no connection. Its data will be "
                                          f"missing until it reconnects.\n\nStart anyway?") != QMessageBox.Yes:

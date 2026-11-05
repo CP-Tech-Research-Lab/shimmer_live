@@ -11,6 +11,7 @@
                                                                 formulas are in info.json ("calibration")
                            <device>_Keypoint                    keypoint name at the nearest sample
   <plugin> - <device>.csv  plugin outputs, same three timestamps
+  devices.csv              every Shimmer: name, label (e.g. the participant), address, kind, firmware, rate
   keypoints.csv            every keypoint with its time on every clock and its source (button / tcp:<port>)
   qc.csv                   quality checks
   info.json                notes, devices, plugins, connection events, clocks, app version
@@ -321,13 +322,18 @@ def write_zip(a: Analysis, name: str = "", notes: str = "", out_folder=None) -> 
         kp = a.keypoints if len(a.keypoints) else pd.DataFrame(
             columns=["Keypoint", "Color", "Source", "Timestamp_Unix_CAL", "Timestamp_Shared_CAL"])
         _write_table(zf, "keypoints.csv", "", kp, None)
+        dev_df = pd.DataFrame([{"Device": d.meta["name"], "Label": d.meta.get("label", ""), "Address": d.meta["mac"],
+                                "Kind": d.meta.get("kind", ""), "Firmware": d.meta.get("firmware", ""),
+                                "Sampling_Rate_Hz": d.meta["sampling_rate_hz"]} for d in a.devices],
+                              columns=["Device", "Label", "Address", "Kind", "Firmware", "Sampling_Rate_Hz"])
+        _write_table(zf, "devices.csv", "", dev_df, None)
         qc_df = pd.DataFrame([asdict(q) for q in a.qc], columns=["device", "signal", "check", "status", "value",
                                                                  "detail"])
         _write_table(zf, "qc.csv", "", qc_df, None)
         info = {
             "app": "Shimmer Live", "app_version": __version__, "recording_name": name, "notes": notes,
             "recorded_with_app_version": a.session.get("app_version"),
-            "summary": a.summary, "files": files + ["keypoints.csv", "qc.csv", "notes.txt"],
+            "summary": a.summary, "files": files + ["devices.csv", "keypoints.csv", "qc.csv", "notes.txt"],
             "values": a.session.get("values", VALUES_CAL),
             "calibration": calibration_info(a),
             "timestamps": _timestamp_doc(a.session),

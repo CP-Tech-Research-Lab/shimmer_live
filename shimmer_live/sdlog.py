@@ -32,6 +32,7 @@ from pyshimmer.bluetooth.bt_commands import ShimmerCommand
 from pyshimmer.bluetooth.bt_const import SET_RWC_COMMAND
 from pyshimmer.reader.shimmer_reader import ShimmerReader
 
+from . import labels
 from . import clocks
 from .expansion_power import prepare_ppg
 from .session import timed as _timed
@@ -437,7 +438,8 @@ def build_recording(session: dict, loaded: dict, out_folder, values: str) -> Pat
         pd.DataFrame(table).to_csv(folder / f"device_{n}.csv", index=False, float_format="%.9g")
         dev_s = session["devices"][mac]
         devices_meta.append({
-            "file": f"device_{n}.csv", "name": name, "mac": mac, "kind": device_kind(d.chans),
+            "file": f"device_{n}.csv", "name": name, "label": dev_s.get("label", ""), "mac": mac,
+            "kind": device_kind(d.chans),
             "firmware": dev_s.get("firmware", ""), "sampling_rate_hz": d.rate_hz, "link": "SD card",
             "channels": [{"key": sp.key, "label": sp.label, "unit": sp.unit, "export_name": sp.export_name,
                           "export_unit": sp.export_unit, "kind": sp.kind, "full_scale": _full_scale(sp),
@@ -489,7 +491,8 @@ def new_session(cfg, name: str, macs_names: list, values: str, keypoint_definiti
     s = {"name": name, "config_time": int(time.time()), "start_unix_ns": clocks.unix_ns(),
          "start_shared_ticks": clocks.shared_clock_ticks(), "clocks": clocks.clock_report(),
          "values": values, "keypoint_definitions": keypoint_definitions, "keypoints": [], "stopped": False,
-         "devices": {mac: {"name": nm, "state": "starting"} for mac, nm in macs_names}}
+         "devices": {mac: {"name": nm, "label": labels.get(cfg, mac), "state": "starting"}
+                     for mac, nm in macs_names}}
     cfg.data[SESSION_KEY] = s
     cfg.save()
     return s

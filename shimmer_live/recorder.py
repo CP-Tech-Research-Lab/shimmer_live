@@ -90,7 +90,8 @@ class Recorder:
             w.writerow(["shimmer_ticks", "host_unix_ns", "shared_ticks"] + [s.specs[i].key for i in idx])
             self._dev[s.mac] = (fh, w, idx)
             devices_meta.append({
-                "file": f"device_{n}.csv", "name": s.name, "mac": s.mac, "kind": s.kind, "firmware": s.firmware,
+                "file": f"device_{n}.csv", "name": s.name, "label": getattr(s, "label", ""), "mac": s.mac,
+                "kind": s.kind, "firmware": s.firmware,
                 "sampling_rate_hz": s.rate, "link": s.link_desc,
                 "channels": [{"key": s.specs[i].key, "label": s.specs[i].label, "unit": s.specs[i].unit,
                               "export_name": s.specs[i].export_name, "export_unit": s.specs[i].export_unit,

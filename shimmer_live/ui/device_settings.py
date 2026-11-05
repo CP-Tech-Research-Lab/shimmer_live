@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
 
+from .. import labels
 from ..device_config import (BASE_SENSORS, BT_LIMIT_BYTES_S, BT_WARN_BYTES_S, CONFLICTS, DEVICE_CLOCK_HZ,
                              EXPANSION_SENSORS, GSR_RANGES, NAME_MAX_LEN, RATE_MAX_HZ, RATE_MIN_HZ, RATE_PRESETS,
                              DeviceConfigurator, achievable_rate, bluetooth_load, packet_bytes, with_exg_changes)
@@ -116,10 +117,21 @@ class DeviceSettingsDialog(QDialog):
 
         g = QGroupBox("Device")
         f = QFormLayout(g)
+        self.label_edit = QLineEdit(labels.get(self.conf.cfg, self.conf.mac))
+        self.label_edit.setMaxLength(labels.MAX_LEN)
+        self.label_edit.setPlaceholderText("e.g. the participant wearing it")
+        self.label_edit.setToolTip("Shown in grey next to the Shimmer's name, in live view and in recordings. Kept on "
+                                   "this computer only (saved at once): nothing is written to the Shimmer.")
+        self.label_edit.editingFinished.connect(
+            lambda: labels.set_label(self.conf.cfg, self.conf.mac, self.label_edit.text()))
+        f.addRow("Label:", self.label_edit)
         self.name_edit = QLineEdit(s.name)
         self.name_edit.setMaxLength(NAME_MAX_LEN)
         self.name_edit.setValidator(QRegularExpressionValidator(QRegularExpression(r"[A-Za-z0-9_\-]*")))
-        f.addRow("Name:", self.name_edit)
+        self.name_edit.setToolTip("The name stored inside the Shimmer (shown by Consensys, written in its SD files). "
+                                  "It is not the Bluetooth name (Shimmer3-XXXX), which never changes; this app shows "
+                                  "the Bluetooth name. To tell Shimmers apart, use the Label above.")
+        f.addRow("Name on the Shimmer:", self.name_edit)
         f.addRow("Address:", QLabel(info.mac))
         f.addRow("Firmware:", QLabel(info.firmware))
         f.addRow("Connection:", QLabel(info.link or "—"))
@@ -415,6 +427,8 @@ class DeviceInfoDialog(QDialog):
         lay = QVBoxLayout(self)
         f = QFormLayout()
         f.addRow("Name:", QLabel(s.name))
+        if getattr(s, "label", ""):
+            f.addRow("Label:", QLabel(s.label))
         f.addRow("Address:", QLabel(s.mac))
         f.addRow("Type:", QLabel(s.kind or "—"))
         f.addRow("Firmware:", QLabel(s.firmware or "—"))

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QHeaderVi
                                QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
+from .. import labels
 from .. import clocks
 from .. import keypoints as kpmod
 from .. import sdlog
@@ -491,7 +492,7 @@ class SdPage(QWidget):
         t.setRowCount(len(devs))
         for i, (mac, d) in enumerate(devs.items()):
             state, color = self._state_text(mac, d)
-            t.setItem(i, 0, QTableWidgetItem(d["name"]))
+            t.setItem(i, 0, QTableWidgetItem(labels.plain(d["name"], d.get("label", ""))))
             st = QTableWidgetItem(state)
             st.setForeground(QColor(color))
             t.setItem(i, 1, st)
