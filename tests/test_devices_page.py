@@ -177,3 +177,12 @@ def test_old_pairings_are_grey_and_battery_has_its_own_column(page):
     assert page.table.item(docked, 1).foreground().color().name() != IDLE_GREY       # in the base: normal
     assert page.table.item(old, 7).text() == "15%" and page.table.item(old, 6).text() == "250 Hz"
     assert page.table.item(old, 8).text().startswith("✔ tested")                       # no longer one long line
+
+
+def test_updated_shimmer_shows_the_restart_reminder_until_it_answers(page):
+    page.paired = [BtDevice("D8:47:8F:04:BC:CE", "Shimmer3-BCCE", True)]
+    dock(page, [SlotInfo(1, True, "D8:47:8F:04:BC:CE", "LogAndStream 1.1.9", True)])
+    page.mark_needs_restart("D8:47:8F:04:BC:CE")
+    assert "switch it off and on" in cells(page)["Shimmer3-BCCE"][2]
+    page.mark_restarted("D8:47:8F:04:BC:CE")
+    assert "switch it off and on" not in cells(page)["Shimmer3-BCCE"][2]

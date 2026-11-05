@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMessage
 
 from .. import fw_update
 from ..session import probe_device
-from .common import CRITICAL, GOOD, MUTED, WARNING, run_bg, set_role, ui_call
+from .common import CRITICAL, GOOD, MUTED, WARNING, Banner, run_bg, set_role, ui_call
 
 log = logging.getLogger("shimmerlive.ui.firmware")
 
@@ -22,12 +22,13 @@ class FirmwareDialog(QDialog):
         self.setMinimumWidth(620)
         lay = QVBoxLayout(self)
         where = watcher.where(docked.unit, docked.slot)
-        head = QLabel(f"<b>{name}</b> · {where} · now running <b>{current or 'unknown'}</b>")
+        self.head = head = QLabel(f"<b>{name}</b> · {where} · now running <b>{current or 'unknown'}</b>")
         head.setTextFormat(Qt.RichText)
         lay.addWidget(head)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("New firmware:"))
+        self.choice_label = QLabel("New firmware:")
+        row.addWidget(self.choice_label)
         self.choice = QComboBox()
         self.choice.setToolTip("Only official Shimmer images whose checksum the app knows are offered. Files live in "
                                f"{fw_update.FIRMWARE_DIR}")
@@ -40,7 +41,7 @@ class FirmwareDialog(QDialog):
         self.info.setWordWrap(True)
         self.info.setTextFormat(Qt.RichText)
         lay.addWidget(self.info)
-        warn = QLabel("<b>Before you start:</b> keep the Shimmer in the base and switched on, and don't unplug the "
+        self.warn = warn = QLabel("<b>Before you start:</b> keep the Shimmer in the base and switched on, and don't unplug the "
                       "base or its USB cable (about 1 minute). Its configuration and calibration are saved first; if "
                       "anything goes wrong the update can simply be run again. <b>Afterwards:</b> switch the Shimmer "
                       "off and on once, then press <i>Test connection</i>.")
@@ -56,6 +57,9 @@ class FirmwareDialog(QDialog):
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.RichText)
         lay.addWidget(self.status)
+        self.restart = Banner("warning", "")              # shown after the update: the step people miss
+        self.restart.setVisible(False)
+        lay.addWidget(self.restart)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(140)
@@ -66,7 +70,7 @@ class FirmwareDialog(QDialog):
         btns.addStretch(1)
         self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.reject)
-        self.btn_test = QPushButton("Test connection")
+        self.btn_test = QPushButton("I switched it off and on — Test connection")
         self.btn_test.setToolTip("After switching the Shimmer off and on: connect over Bluetooth and read its "
                                  "firmware, sensors and battery")
         self.btn_test.clicked.connect(self._test)
@@ -165,6 +169,18 @@ class FirmwareDialog(QDialog):
                             f"<i>Test connection</i> below. Backup: {r.backup_dir}")
         self.btn_test.setVisible(self.cfg is not None)
         self.btn_go.setVisible(False)
+        self.restart.update_content("warning", f"Not finished yet: switch {self.name} OFF and ON now")
+        self.restart.setVisible(True)
+        self.head.setText(f"<b>{self.name}</b> · now running <b>{r.after}</b>")
+        for w in (self.choice_label, self.choice, self.info, self.warn):      # only what matters next stays
+            w.setVisible(False)
+        self.adjustSize()
+        mark = getattr(self.parent(), "mark_needs_restart", None)
+        if mark:
+            mark(self.docked.info.mac)
+        QMessageBox.information(self, "Almost done", f"{self.name} now runs {r.after}.\n\nSwitch it OFF and ON now "
+                                "(with its slide switch). The new firmware reads its settings and turns Bluetooth on "
+                                "only at power-on.\n\nThen press 'Test connection'.")
         self.status.setTextFormat(Qt.RichText)
         log.info("%s firmware updated: %s -> %s", self.name, r.before, r.after)
 
@@ -187,6 +203,10 @@ class FirmwareDialog(QDialog):
             self.btn_test.setEnabled(True)
             self.btn_close.setEnabled(True)
             if res.get("ok"):
+                self.restart.setVisible(False)
+                done_cb = getattr(self.parent(), "mark_restarted", None)
+                if done_cb:
+                    done_cb(mac)
                 self.status.setText(f"<span style='color:{GOOD}; font-weight:700'>✔ Connected:</span> "
                                     f"{res['firmware']} · {res['kind']} · {res['rate_hz']:g} Hz"
                                     + (f" · battery {res['battery_pct']:.0f}%" if res.get("battery_pct") is not None

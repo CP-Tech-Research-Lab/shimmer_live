@@ -146,7 +146,8 @@ class DevicesPage(QWidget):
         self.paired: list[BtDevice] = []
         self.found: list[BtDevice] = []
         self.rows: list[Row] = []
-        self._sd_macs = set()           # Shimmers recording on their SD card (sdlog session)
+        self._sd_macs = set()
+        self.needs_restart = set()      # firmware just updated: must be switched off and on           # Shimmers recording on their SD card (sdlog session)
         self.live_blocked = False
         self.base = BaseWatcher(cfg, backend, self._ask_pin)
         self.base.changed.connect(self._render_all)
@@ -378,6 +379,8 @@ class DevicesPage(QWidget):
             return f"● recording on its SD card (session {sdlog.active(self.cfg)['name']})", CRITICAL
         if r.mac in self.busy:
             return self.busy[r.mac], BLUE
+        if r.mac in self.needs_restart:
+            return "⚠ switch it off and on to finish the firmware update, then Test connection", WARNING
         res = self.base.result(r.base, r.slot) if r.slot else None
         if res:
             return res[1], {"busy": BLUE, dock_setup.READY: GOOD, dock_setup.PROBLEM: CRITICAL}.get(res[0], MUTED)
@@ -546,6 +549,14 @@ class DevicesPage(QWidget):
             self.cfg.save()
             self._update_buttons()
 
+    def mark_needs_restart(self, mac):
+        self.needs_restart.add(mac)
+        self._render_all()
+
+    def mark_restarted(self, mac):
+        self.needs_restart.discard(mac)
+        self._render_all()
+
     def _firmware_target(self):
         """The highlighted row if it is one readable Shimmer in a base, else None."""
         rows = sorted({i.row() for i in self.table.selectedItems()})
@@ -617,6 +628,8 @@ class DevicesPage(QWidget):
 
         def done(res):
             self.busy.pop(mac, None)
+            if res.get("ok"):
+                self.needs_restart.discard(mac)       # it answers over Bluetooth: the update is finished
             self._render_table()
             log.info("%s test: %s", name, describe_check(res)[0])
             if then:
