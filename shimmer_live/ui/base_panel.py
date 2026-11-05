@@ -62,6 +62,7 @@ class BaseWatcher(QObject):
         self.state = "checking"       # checking (not looked yet) | none (no base) | base
         self.polling = False
         self.setting_up = False
+        self.updating = False           # a firmware update owns the base's ports
         self.timer = QTimer(self, interval=POLL_MS, timeout=self._poll)
 
     # ---------------- queries ----------------
@@ -74,7 +75,7 @@ class BaseWatcher(QObject):
 
     @property
     def busy(self) -> bool:
-        return self.setting_up or self.reading
+        return self.setting_up or self.reading or self.updating
 
     def docked(self) -> list:
         """[(unit, SlotInfo)] for every occupied slot of every base."""
@@ -120,7 +121,7 @@ class BaseWatcher(QObject):
         self._poll()
 
     def _poll(self):
-        if self.polling or self.setting_up:
+        if self.polling or self.setting_up or self.updating:
             return
         self.polling = True
         known = dict(self.units)

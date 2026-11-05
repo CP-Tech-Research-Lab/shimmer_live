@@ -24,6 +24,7 @@ from .device_settings import DeviceSettingsDialog
 from .dialogs import PinDialog
 from .guide import GUIDE_HTML
 from .keypoints_editor import KeypointsEditor
+from .firmware_dialog import FirmwareDialog
 from .sd_page import StartSdDialog
 
 log = logging.getLogger("shimmerlive.devices")
@@ -45,6 +46,8 @@ TIPS = {
     "sd": "Make the ticked Shimmers record on their own SD cards (no Bluetooth while recording, so more than 7 "
           "at once). Take them out of the base first. You mark keypoints and stop them from this app.",
     "sd_open": "Open the SD recording in progress: keypoints, status, stop and import.",
+    "firmware": "Update the firmware of the highlighted Shimmer (it must be in a base). Its configuration is "
+                "saved first and restored afterwards.",
     "settings": "Firmware information and device configuration: sampling rate, sensors, ECG gains, GSR range, name.",
     "scan": f"Search for Shimmers nearby over Bluetooth for {SCAN_SECONDS} s. Use this for Shimmers that are not in "
             f"a base.",
@@ -190,6 +193,7 @@ class DevicesPage(QWidget):
                                  "Last test, or setup progress", "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.itemChanged.connect(self._on_check_changed)
+        self.table.itemSelectionChanged.connect(self._update_buttons)
         card.body.addWidget(self.table, 1)
         self.empty = QLabel()
         self.empty.setAlignment(Qt.AlignCenter)
@@ -206,7 +210,9 @@ class DevicesPage(QWidget):
         self.btn_forget.clicked.connect(self._forget_selected)
         self.btn_live = _button("Show live data  ▶", TIPS["live"], "primary")
         self.btn_live.clicked.connect(self._go_live)
-        for b in (self.btn_setup, self.btn_test, self.btn_forget):
+        self.btn_fw = _button("Update firmware…", TIPS["firmware"])
+        self.btn_fw.clicked.connect(self._update_firmware)
+        for b in (self.btn_setup, self.btn_test, self.btn_forget, self.btn_fw):
             acts.addWidget(b)
         acts.addStretch(1)
         self.btn_sd = _button("Record on SD cards…", TIPS["sd"])
@@ -488,11 +494,32 @@ class DevicesPage(QWidget):
             self.cfg.save()
             self._update_buttons()
 
+    def _firmware_target(self):
+        """The highlighted row if it is one readable Shimmer in a base, else None."""
+        rows = sorted({i.row() for i in self.table.selectedItems()})
+        if len(rows) != 1 or rows[0] >= len(self.rows):
+            return None
+        r = self.rows[rows[0]]
+        return r if r.slot and r.mac and r.mac not in self._sd_macs else None
+
+    def _update_firmware(self):
+        r = self._firmware_target()
+        docked = self.base.locate(r.mac) if r else None
+        if docked is None:
+            QMessageBox.information(self, "Update firmware", "Highlight one Shimmer that is in the base.")
+            return
+        if self.base.busy:
+            QMessageBox.information(self, "Update firmware", "The base is busy (reading slots or setting up): "
+                                                             "try again in a few seconds.")
+            return
+        FirmwareDialog(self, self.base, docked, r.name, r.firmware).exec()
+
     def _update_buttons(self):
         sel = self.checked_devices()
         busy = any(m in self.busy for m, _ in sel) or self.base.setting_up
         self.btn_live.setEnabled(bool(sel) and not busy and not self.live_blocked)
         self.btn_live.setText(f"Show live data ({len(sel)})  ▶" if sel else "Show live data  ▶")
+        self.btn_fw.setEnabled(self._firmware_target() is not None and not self.base.busy)
         over = len(sel) > self.bt_limit()
         self.btn_live.setToolTip(TIPS["live"] + (f"\n\n⚠ {len(sel)} ticked: this computer streams at most "
                                                  f"{self.bt_limit()} at once." if over else ""))

@@ -151,3 +151,14 @@ def test_flash_tool_refuses_an_image_that_does_not_match_its_checksum(tmp_path):
     r = subprocess.run([sys.executable, str(root / "tools" / "fw_flash.py"), "1", "F66C", str(img), "0" * 64],
                        capture_output=True, text=True)
     assert r.returncode != 0 and "does not match the published SHA-256" in r.stderr
+
+
+def test_known_images_are_offered_only_with_the_right_checksum(tmp_path):
+    from shimmer_live import fw_update
+    good = fw_update.RECOMMENDED
+    (tmp_path / good.filename).write_text("not the real image")
+    assert fw_update.local_images(tmp_path) == []                       # wrong content: not offered
+    real = Path.home() / "Documents/ShimmerFirmware" / good.filename
+    if real.exists():
+        (tmp_path / good.filename).write_bytes(real.read_bytes())
+        assert [i.version for i, _ in fw_update.local_images(tmp_path)] == [good.version]

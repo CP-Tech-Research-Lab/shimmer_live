@@ -149,3 +149,15 @@ def test_two_bases_are_shown_together(page):
     assert c["Shimmer3-8684"][0] == "base A · slot 1" and c["Shimmer3-A187"][0] == "base B · slot 1"
     assert c["…"][0] == "base B · slot 3"
     assert "2 Shimmer bases · 3 docked" in page.pill_base.text()
+
+
+def test_firmware_button_needs_one_shimmer_in_the_base(page):
+    page.paired = [BtDevice("00:06:66:B9:83:95", "Shimmer3-8395", True)]
+    dock(page, [SlotInfo(2, True, "D8:47:8F:04:BC:CE", "LogAndStream 0.16.0", True)])
+    page._render_all()
+    names = [page.table.item(r, 1).text() for r in range(page.table.rowCount())]
+    assert not page.btn_fw.isEnabled()                                   # nothing highlighted
+    page.table.selectRow(names.index("Shimmer3-BCCE"))
+    assert page.btn_fw.isEnabled()                                       # docked: can be updated
+    page.table.selectRow(names.index("Shimmer3-8395"))
+    assert not page.btn_fw.isEnabled()                                   # not in a base
