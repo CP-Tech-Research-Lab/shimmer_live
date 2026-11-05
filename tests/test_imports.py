@@ -108,6 +108,7 @@ def test_warnings_are_light_and_can_be_hidden_but_critical_alerts_cannot():
     alerts = {"gsr-A": ("warning", "GSR shows no skin contact", None), "lost-B": ("critical", "CONNECTION LOST", None)}
     area.sync(alerts)
     assert area.banners["gsr-A"].light and not area.banners["lost-B"].light
-    area._hide("gsr-A")
+    area.banners["gsr-A"].btn_hide.click()            # a real click (clicked passes a bool along)
+    assert "gsr-A" in area.hidden and "gsr-A" not in area.banners
     area.sync(alerts)                                   # the same warning comes back from the next update...
     assert "gsr-A" not in area.banners and "lost-B" in area.banners   # ...but stays hidden

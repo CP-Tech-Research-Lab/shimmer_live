@@ -237,7 +237,8 @@ class Banner(QFrame):
             hide = QPushButton("✕  Hide")
             set_role(hide, "small")
             hide.setToolTip("Don't show this message again until the app is closed")
-            hide.clicked.connect(on_hide)
+            hide.clicked.connect(lambda _checked=False: on_hide())   # clicked passes a bool: don't forward it
+            self.btn_hide = hide
             lay.addWidget(hide)
         self.update_content(severity, text)
 

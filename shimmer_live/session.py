@@ -461,6 +461,10 @@ def probe_device(mac: str, name: str, cfg, attempts: int = 3, progress=None) -> 
         finally:
             link.close()
     result = {"ok": False, "when": clocks.utc_iso(clocks.unix_ns()), "error": friendly_error(last_err)}
+    prev = cfg.device(mac).get("last_check") or {}
+    good = prev if prev.get("ok") else prev.get("last_ok")
+    if good:
+        result["last_ok"] = good            # keep the last good reading (battery, sensors) next to the failure
     cfg.update_device(mac, name=name, last_check=result)
     return result
 

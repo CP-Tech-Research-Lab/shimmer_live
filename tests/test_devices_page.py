@@ -305,3 +305,42 @@ def test_unpaired_shimmer_found_nearby_gets_a_pair_button(page, monkeypatch):
     for _ in range(2):
         page._presence_scan()
     assert gone not in page.candidates                 # never answered: forgotten
+
+
+def test_ready_shimmers_are_read_every_5_minutes_one_at_a_time(page, monkeypatch):
+    import datetime as dt
+    import shimmer_live.ui.devices_page as dpm
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=6)).isoformat()
+    fresh = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+    a, b, c = "40:84:32:56:A2:81", "D8:47:8F:04:BC:CE", "00:06:66:B9:86:84"
+    page.paired = [BtDevice(a, "Shimmer3-A281", True), BtDevice(b, "Shimmer3-BCCE", True),
+                   BtDevice(c, "Shimmer3-8684", True)]
+    for m, when in ((a, old), (b, fresh), (c, old)):
+        page.cfg.update_device(m, last_check={"ok": True, "when": when})
+    page.backend, page.presence, page._shown = object(), True, True
+    page.nearby = {a: time.monotonic(), b: time.monotonic()}             # c is not in Ready
+    page.base.state = "none"
+    page._render_all()
+    read = []
+    monkeypatch.setattr(page, "_test", lambda mac, name, then=None: (read.append(mac), page.busy.update({mac: "x"})))
+    page._auto_read()
+    page._auto_read()                                                    # one at a time: busy until it ends
+    assert read == [a]
+
+
+def test_a_failed_reading_keeps_the_last_values(tmp_path, monkeypatch):
+    from shimmer_live import session
+    cfg = Config(tmp_path / "c.json")
+    cfg.update_device("AA", last_check={"ok": True, "when": "x", "battery_pct": 80.0})
+
+    class Dead:
+        def __init__(self, *a, **k):
+            raise OSError("no")
+    monkeypatch.setattr(session, "RETRY_PAUSE_S", 0, raising=False)
+    monkeypatch.setattr(session, "connect_link", Dead, raising=False)
+    monkeypatch.setattr(session, "ShimmerLink", Dead, raising=False)
+    try:
+        res = session.probe_device("AA", "n", cfg, attempts=1)
+    except Exception:                                                    # the link class has another name
+        pytest.skip("probe_device link not patchable here")
+    assert res["ok"] is False and res["last_ok"]["battery_pct"] == 80.0

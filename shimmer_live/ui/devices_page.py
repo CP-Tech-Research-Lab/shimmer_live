@@ -48,6 +48,8 @@ GROUPS = {   # order in the table: title, explanation, title background, row bac
     AWAY: ("Paired, not found", "switched off, out of range or connected to another program", "#ececea", "#ffffff"),
 }
 HEADER_H = 30
+READ_EVERY_S = 300            # battery and sensors of the Shimmers in Ready are read again this often
+READ_RESTART_S = 20           # a Shimmer just updated (to be switched off and on) is tried this often
 TICKED_HEAD_START_S = 20      # ticked Shimmers that are not found are checked again sooner than the others
 MISSES_TO_GREY = 2            # a found Shimmer turns grey after this many knocks in a row without answer
 TIPS = {
@@ -55,8 +57,6 @@ TIPS = {
                "docked in it.",
     "setup": "For every ticked Shimmer in the base: pair it over Bluetooth (the PIN 1234 is entered for you), test "
              "the connection and set its clock. Progress and results appear in the Status column.",
-    "test": "Briefly connect to the ticked (or highlighted) Shimmers and read their firmware, sampling rate, sensors "
-            "and battery. Nothing is changed on the Shimmer.",
     "forget": "Remove this computer's Bluetooth pairing with the ticked (or highlighted) Shimmers. Docked Shimmers "
               "can be paired again with one click on 'Set up docked Shimmers'.",
     "live": "Open the live view and start streaming from the ticked Shimmers in Ready.",
@@ -190,6 +190,7 @@ class DevicesPage(QWidget):
         self._presence_running = False
         self._shown = False
         self._presence_timer = QTimer(self, singleShot=True, timeout=self._presence_scan)
+        self._read_timer = QTimer(self, interval=3000, timeout=self._auto_read)   # battery & sensors of Ready ones
         self._knock_queue = []                 # this round's knocks, in order: the first is being checked now
         self._activity = ""                    # "knock" | "discover" | "paused" | "" (between rounds)
         self.base = BaseWatcher(cfg, backend, self._ask_pin)
@@ -274,9 +275,9 @@ class DevicesPage(QWidget):
                                  "nearby (checked every few seconds)",
                                  "LogAndStream version. ⬆ old: update recommended · ↑ a newer version exists "
                                  "(hover a version for details)",
-                                 "Sensors switched on (at the last test; hover for the channels)",
-                                 "Sampling rate (at the last test)", "Battery (at the last test)",
-                                 "✔ time of the last successful test (hover for details), or setup progress / "
+                                 "Sensors switched on (at the last reading; hover for the channels)",
+                                 "Sampling rate (at the last reading)", "Battery (at the last reading; Ready Shimmers are read every 5 minutes)",
+                                 "✔ time of the last reading of battery and sensors (hover for details), or setup progress / "
                                  "problems",
                                  "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
@@ -293,8 +294,6 @@ class DevicesPage(QWidget):
         acts.setSpacing(8)
         self.btn_setup = _button("Set up docked Shimmers", TIPS["setup"])
         self.btn_setup.clicked.connect(self._setup_ticked)
-        self.btn_test = _button("Test connection", TIPS["test"])
-        self.btn_test.clicked.connect(self._test_selected)
         self.btn_forget = _button("Forget pairing", TIPS["forget"])
         self.btn_forget.clicked.connect(self._forget_selected)
         self.btn_live = _button("Show live data  ▶", TIPS["live"], "primary")
@@ -303,7 +302,7 @@ class DevicesPage(QWidget):
         self.btn_fw.clicked.connect(self._update_firmware)
         # Two rows, so the page fits narrow screens (1440 px logical at 2x scaling): managing Shimmers
         # above, starting an acquisition below on the right.
-        for b in (self.btn_setup, self.btn_test, self.btn_forget, self.btn_fw):
+        for b in (self.btn_setup, self.btn_forget, self.btn_fw):
             acts.addWidget(b)
         acts.addStretch(1)
         self.btn_sd = _button("Record on SD cards…", TIPS["sd"])
@@ -433,7 +432,8 @@ class DevicesPage(QWidget):
         if r.mac in self.busy:
             return self.busy[r.mac], BLUE
         if r.mac in self.needs_restart:
-            return "⚠ switch it off and on to finish the firmware update, then Test connection", WARNING
+            return ("⚠ switch it off and on to finish the firmware update (it is checked again automatically)",
+                    WARNING)
         res = self.base.result(r.base, r.slot) if r.slot else None
         if res:
             return res[1], {"busy": BLUE, dock_setup.READY: GOOD, dock_setup.PROBLEM: CRITICAL}.get(res[0], MUTED)
@@ -521,6 +521,26 @@ class DevicesPage(QWidget):
             self._presence_next(PRESENCE_PAUSE_MS * 3)
 
         run_bg(work, done, failed, "nearby")
+
+    def _auto_read(self):
+        """Read battery, sensors and rate of the Shimmers in Ready every READ_EVERY_S (and try one waiting to be
+        switched off and on after a firmware update every READ_RESTART_S), one at a time and never while the
+        background search is using Bluetooth (it pauses while this runs)."""
+        if not self._shown or self.busy or self.base.setting_up or self._presence_running or not self.backend:
+            return
+        due = []
+        for r in self.rows:
+            if r.header or not r.mac or not r.paired or r.mac in self._sd_macs:
+                continue
+            wait = READ_RESTART_S if r.mac in self.needs_restart else READ_EVERY_S if r.group == READY else None
+            if wait is None:
+                continue
+            age = seconds_since((self.cfg.device(r.mac).get("last_check") or {}).get("when", ""))
+            if age >= wait:
+                due.append((age, r))
+        if due:
+            _, r = max(due, key=lambda x: x[0])
+            self._test(r.mac, r.name)
 
     def _to_check(self):
         """Paired Shimmers that are not docked (the ones the knocks are for)."""
@@ -671,7 +691,7 @@ class DevicesPage(QWidget):
                            "Recording on its SD card" if r.mac in self._sd_macs else
                            "Not paired yet: press Pair" if r.group == NEARBY else
                            "Not found nearby: switch it on and bring it closer. It moves to Ready as soon as the app "
-                           "finds it (it checks every few seconds), or after a successful Test connection."
+                           "finds it (it checks every few seconds)."
                            if r.mac and not present else "Still reading it over USB")
             t.setItem(i, 0, chk)
             name = QTableWidgetItem(r.name)
@@ -690,7 +710,8 @@ class DevicesPage(QWidget):
                                      fwmod.NEWER_EXISTS: MUTED, fwmod.UNKNOWN: MUTED}.get(level, "#1f1f1e")))
             fw.setToolTip(f"{r.firmware}\n\n{why}" if r.firmware else why)
             t.setItem(i, 3, fw)
-            chk = (self.cfg.device(r.mac).get("last_check") or {}) if r.mac else {}
+            last = (self.cfg.device(r.mac).get("last_check") or {}) if r.mac else {}
+            chk = last if last.get("ok") else (last.get("last_ok") or {})   # a failed reading keeps the last values
             ok = bool(chk.get("ok"))
             kind = QTableWidgetItem(chk.get("kind", "") if ok else "")
             kind.setToolTip(", ".join(chk.get("channels", [])) if ok else "")
@@ -701,13 +722,14 @@ class DevicesPage(QWidget):
             batt = QTableWidgetItem(f"{batt_pct:.0f}%" if batt_pct is not None else "")
             if batt_pct is not None:
                 batt.setForeground(QColor(CRITICAL if batt_pct < 10 else WARNING if batt_pct < 20 else GOOD))
-                batt.setToolTip(f"at the last test ({_local_time(chk.get('when', ''))})")
+                batt.setToolTip(f"read at {_local_time(chk.get('when', ''))} (read again every "
+                                f"{READ_EVERY_S // 60} minutes while it is in Ready)")
             t.setItem(i, 6, batt)
             text, color = self._status_of(r)
             st = QTableWidgetItem(text)
             st.setForeground(QColor(color))
             last = (self.cfg.device(r.mac).get("last_check") or {}).get("when") if r.mac else None
-            st.setToolTip(text + (f"\nlast test: {_local_time(last)}" if last else ""))
+            st.setToolTip(text + (f"\nlast reading: {_local_time(last)}" if last else ""))
             t.setItem(i, C_STATUS, st)
             idle = self._is_idle(r)
             for c in range(C_GEAR):
@@ -868,22 +890,14 @@ class DevicesPage(QWidget):
         self._update_buttons()
 
     # ---------------- actions ----------------
-    def _test_selected(self):
-        devs = self._target_devices()
-        if not devs:
-            QMessageBox.information(self, "Test connection", "Tick or highlight a paired Shimmer first.")
-            return
-        for mac, name in devs:
-            self._test(mac, name)
-
     def _test(self, mac, name, then=None):
         if mac in self.busy:
             return
-        self.busy[mac] = "testing…"
+        self.busy[mac] = "reading battery and sensors…"
         self._render_table()
 
         def progress(text):
-            self.busy[mac] = f"testing… {text}"
+            self.busy[mac] = f"reading battery and sensors… {text}"
             ui_call(self._render_table)
 
         def done(res):
@@ -1013,6 +1027,7 @@ class DevicesPage(QWidget):
         super().showEvent(ev)
         self.base.start()                    # watch USB for a base only while this page is visible
         self._shown = True
+        self._read_timer.start()
         self.checked = set()                 # "waiting…" again until each has been checked after coming back
         # paired Shimmers first: the first look for unpaired ones comes ~15 s after the page is shown
         self._last_discover = max(self._last_discover, time.monotonic() - DISCOVER_EVERY_S + 15)
@@ -1022,6 +1037,10 @@ class DevicesPage(QWidget):
         self.base.stop()
         self._shown = False
         self._activity, self._knock_queue = "", []
+        try:
+            self._read_timer.stop()
+        except RuntimeError:
+            pass
         # a running search stops within half a second (live view needs the radio)
         try:
             self._presence_timer.stop()

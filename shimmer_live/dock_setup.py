@@ -95,7 +95,7 @@ def setup_slot(link, info, backend, cfg, ask_user, progress=lambda text: None) -
     result = probe_device(info.mac, dev.name or info.name, cfg, attempts=TEST_ATTEMPTS)
     if not result["ok"]:
         return done(PROBLEM, f"paired, but the connection test failed: {result.get('error')}. "
-                             "Pairing kept; retry Test connection when the device is available.")
+                             "Pairing kept; it is checked again automatically when it is switched on nearby (Ready).")
     progress("setting its clock…")
     clock_ok = True
     try:

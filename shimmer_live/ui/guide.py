@@ -23,7 +23,7 @@ scan button: the page finds them by itself.</p>
     is not paired yet: press <b>Pair</b> in its row.</li>
 <li><b style="color:#888">Paired, not found</b> (grey) &mdash; switched off, out of range, or connected to another
     program. Switch it on (blue blink every 2 s) and bring it closer: it moves to <b>Ready</b> at its next
-    check. A successful <b>Test connection</b> (highlight the row) also does it.</li>
+    check.</li>
 </ul>
 <p><b>How the page finds them:</b> while it is open, it knocks on each paired Shimmer that is not in a base,
 one after the other (a tiny Bluetooth connection request, nothing starts on the Shimmer), and every ~45 s it
@@ -31,6 +31,9 @@ looks briefly for Shimmers that are not paired yet. A switched-on Shimmer answer
 switched-off one takes ~5 s to give up on, so with many switched off it can take up to a minute to reach a
 given one. Ticked Shimmers are checked more often. The line above the table shows what is being checked right now; in the Where column <i>checking…</i> marks that Shimmer and <i>waiting…</i> one not checked yet.</p>
 <p>Your ticks are remembered: a Shimmer you ticked earlier is ticked again as soon as it is in <b>Ready</b>.</p>
+<p><b>Battery, sensors, rate:</b> the app reads them by itself from every Shimmer in <b>Ready</b> as soon as it
+gets there and then every 5 minutes (one Shimmer at a time; the Status column says <i>reading battery and
+sensors…</i>). If a reading fails, the last values stay and Status shows why.</p>
 
 <h3>Setting up Shimmers from the base (fastest)</h3>
 <ol>
@@ -43,7 +46,7 @@ given one. Ticked Shimmers are checked more often. The line above the table show
     or <b>Record on SD cards</b>.</li>
 </ol>
 <p>If a paired Shimmer does not connect, setup keeps its pairing: a timeout can mean the radio is
-temporarily busy or unreachable. Retry <b>Test connection</b>. If you need to replace a pairing,
+temporarily busy or unreachable: it is checked again automatically once it is in <b>Ready</b>. If you need to replace a pairing,
 use <b>Forget pairing</b>, then set it up again.</p>
 
 <h3>Connecting a new Shimmer without a base</h3>
@@ -56,8 +59,8 @@ use <b>Forget pairing</b>, then set it up again.</p>
 <li>Within about a minute it appears under <b>Found nearby, not paired</b> as <b>Shimmer3-XXXX</b>, where XXXX are
     the last 4 characters of the Bluetooth address printed on the Shimmer label. <b>Refresh</b> looks again at once.</li>
 <li>Press <b>Pair</b> in its row. If a PIN is requested, the PIN is <b>1234</b>. Newer radios pair without a PIN.</li>
-<li>After pairing the app automatically <b>tests</b> it (firmware, sampling rate, sensors, battery) and it
-    moves to <b>Ready</b>, ticked.</li>
+<li>After pairing the app reads its firmware, sampling rate, sensors and battery, and it moves to
+    <b>Ready</b>, ticked.</li>
 </ol>
 
 <h3>If a Shimmer does not respond</h3>
