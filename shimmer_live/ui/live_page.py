@@ -236,6 +236,7 @@ class LivePage(QWidget):
         kp_holder = QWidget()
         self.kp_bar = FlowLayout(kp_holder, spacing=8)
         kp_card.body.addWidget(kp_holder)
+        kp_card.actions.addWidget(self._values_choice(), 0, Qt.AlignTop)
         root.addWidget(kp_card)
         self.kp_buttons = []
         self._shortcuts = []
@@ -280,7 +281,6 @@ class LivePage(QWidget):
         left_lay = QVBoxLayout(self.left)
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(10)
-        left_lay.addWidget(self._values_box())
         sig_card = Card("Signals", "Eye: show in the plots · Dot: record. The dots lock while recording.")
         sig_card.body.addWidget(self.panel_scroll, 1)
         left_lay.addWidget(sig_card, 1)
@@ -388,37 +388,37 @@ class LivePage(QWidget):
         self.cfg.save()
         self._built_for = None                      # rebuild plots with the new visibility
 
-    def _values_box(self):
-        """Raw (default) or calibrated values in recordings; locked while recording."""
-        box = Card("Values to record")
-        v = box.body
-        v.setSpacing(4)
-        self.values_group = QButtonGroup(self)
-        self.rb_raw = QRadioButton("Raw device values (default)")
-        self.rb_raw.setToolTip("Save every value exactly as the Shimmer sent it (columns ending in _RAW). The formulas "
-                               "to convert them are saved with the recording.")
-        self.rb_cal = QRadioButton("Calibrated (mV, µS)")
-        self.rb_cal.setToolTip("Save values already converted to physical units (columns ending in _CAL), like a "
-                               "Consensys 'Calibrated' export")
-        for i, rb in enumerate((self.rb_raw, self.rb_cal)):
-            self.values_group.addButton(rb, i)
-            v.addWidget(rb)
-        (self.rb_cal if self.cfg.data.get("record_values") == VALUES_CAL else self.rb_raw).setChecked(True)
-        self.values_group.idToggled.connect(self._values_changed)
-        info = set_role(QPushButton("ⓘ How values are calibrated"), "small")
-        info.setToolTip("Show the formulas that convert raw values to mV and µS")
+    def _values_choice(self):
+        """One compact line: raw (default) or calibrated values in recordings; locked while recording."""
+        holder = QWidget()
+        h = QHBoxLayout(holder)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        lab = QLabel("Values to save:")
+        lab.setStyleSheet(f"color: {MUTED};")
+        h.addWidget(lab)
+        self.values_combo = QComboBox()
+        self.values_combo.addItem("Raw device values", VALUES_RAW)
+        self.values_combo.addItem("Calibrated (mV, µS)", VALUES_CAL)
+        self.values_combo.setToolTip("Raw (default): every value exactly as the Shimmer sent it (columns _RAW); the "
+                                     "formulas to convert them are saved with the recording.\nCalibrated: values "
+                                     "already converted to physical units (columns _CAL), like a Consensys export.")
+        self.values_combo.setCurrentIndex(1 if self.cfg.data.get("record_values") == VALUES_CAL else 0)
+        self.values_combo.currentIndexChanged.connect(self._values_changed)
+        h.addWidget(self.values_combo)
+        info = set_role(QPushButton("ⓘ"), "small")
+        info.setToolTip("How raw values are converted to mV and µS")
         info.clicked.connect(lambda: CalibrationDialog(self).exec())
-        v.addWidget(info, 0, Qt.AlignLeft)
-        return box
+        h.addWidget(info)
+        return holder
 
-    def _values_changed(self, _id, checked):
-        if checked:
-            self.cfg.data["record_values"] = VALUES_CAL if self.rb_cal.isChecked() else VALUES_RAW
-            self.cfg.save()
+    def _values_changed(self, _index):
+        self.cfg.data["record_values"] = self.record_values
+        self.cfg.save()
 
     @property
     def record_values(self):
-        return VALUES_CAL if self.rb_cal.isChecked() else VALUES_RAW
+        return self.values_combo.currentData() or VALUES_RAW
 
     def _toggle_panel(self, on):
         self.left.setVisible(on)
@@ -460,8 +460,7 @@ class LivePage(QWidget):
     def _lock_recording_choices(self, locked):
         for row in self.rows.values():
             row.rec.setEnabled(not locked)
-        for rb in (self.rb_raw, self.rb_cal):
-            rb.setEnabled(not locked)
+        self.values_combo.setEnabled(not locked)
 
     def _bindings(self, s):
         return self.host.bindings_for(s) if self.host else []

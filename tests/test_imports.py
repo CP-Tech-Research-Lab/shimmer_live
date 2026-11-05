@@ -96,3 +96,18 @@ def test_every_button_explains_itself(qapp, tmp_path):
         page.deleteLater()
     assert checked >= 15, f"only {checked} buttons found: the test is not looking at the real pages"
     assert not missing, "buttons without a hover hint: " + ", ".join(missing)
+
+
+def test_warnings_are_light_and_can_be_hidden_but_critical_alerts_cannot():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from shimmer_live.ui.common import AlertArea
+    area = AlertArea()
+    alerts = {"gsr-A": ("warning", "GSR shows no skin contact", None), "lost-B": ("critical", "CONNECTION LOST", None)}
+    area.sync(alerts)
+    assert area.banners["gsr-A"].light and not area.banners["lost-B"].light
+    area._hide("gsr-A")
+    area.sync(alerts)                                   # the same warning comes back from the next update...
+    assert "gsr-A" not in area.banners and "lost-B" in area.banners   # ...but stays hidden

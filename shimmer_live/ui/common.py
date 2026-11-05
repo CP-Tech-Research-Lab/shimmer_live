@@ -176,13 +176,16 @@ SEVERITY = {"critical": (CRITICAL, CRITICAL_BG, "⚠"), "warning": (WARNING, WAR
 
 
 class Banner(QFrame):
-    def __init__(self, severity, text, action=None):
+    def __init__(self, severity, text, action=None, light=False, on_hide=None):
+        """light: a thin one-line note (live-view warnings); on_hide: show a ✕ that calls it."""
         super().__init__()
+        self.light = light
         self.lab = QLabel()
-        self.lab.setWordWrap(True)
+        self.lab.setWordWrap(not light)
         self.lab.setTextFormat(Qt.RichText)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setContentsMargins(*((10, 2, 4, 2) if light else (12, 8, 12, 8)))
+        lay.setSpacing(6)
         lay.addWidget(self.lab, 1)
         self.btn = None
         self._sev = self._text = None
@@ -190,17 +193,30 @@ class Banner(QFrame):
             self.btn = QPushButton(action[0])
             self.btn.setToolTip(action[2] if len(action) > 2 else action[0])
             self.btn.clicked.connect(action[1])
+            if light:
+                set_role(self.btn, "small")
             lay.addWidget(self.btn)
+        if on_hide:
+            hide = QPushButton("✕  Hide")
+            set_role(hide, "small")
+            hide.setToolTip("Don't show this message again until the app is closed")
+            hide.clicked.connect(on_hide)
+            lay.addWidget(hide)
         self.update_content(severity, text)
 
     def update_content(self, severity, text):
         fg, bg, icon = SEVERITY[severity]
         if severity != self._sev:          # restyling is expensive; only on severity change
             self._sev = severity
-            size = FONT_BASE + 0.5 if severity == "critical" else FONT_BASE
-            self.setStyleSheet(f"Banner {{ background: {bg}; border: 1px solid {fg}; border-left: 8px solid {fg};"
-                               f" border-radius: 6px; }} QLabel {{ color: {fg}; font-weight: 700; "
-                               f"font-size: {size}pt; }}")
+            if self.light:
+                self.setStyleSheet(f"Banner {{ background: {bg}; border: none; border-left: 3px solid {fg}; "
+                                   f"border-radius: 3px; }} QLabel {{ color: {fg}; font-weight: 400; "
+                                   f"font-size: {FONT_S}pt; }}")
+            else:
+                size = FONT_BASE + 0.5 if severity == "critical" else FONT_BASE
+                self.setStyleSheet(f"Banner {{ background: {bg}; border: 1px solid {fg}; border-left: 8px solid {fg};"
+                                   f" border-radius: 6px; }} QLabel {{ color: {fg}; font-weight: 700; "
+                                   f"font-size: {size}pt; }}")
         if text != self._text:
             self._text = text
             self.lab.setText(f"{icon}&nbsp; {text}")
@@ -216,11 +232,23 @@ class AlertArea(QWidget):
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(6)
+        self.lay.setSpacing(3)
         self.banners = {}
         self._order = []
+        self.hidden = set()                # keys the user hid: not shown again until the app closes
+
+    def _hide(self, key):
+        self.hidden.add(key)
+        b = self.banners.pop(key, None)
+        if b is not None:
+            b.deleteLater()
+        self._order = [k for k in self._order if k != key]
+        self.setVisible(bool(self.banners))
 
     def sync(self, alerts: dict):
-        """alerts: key -> (severity, html_text, action or None)"""
+        """alerts: key -> (severity, html_text, action or None). Critical alerts stay big and cannot be hidden;
+        warnings and notes are thin lines with a ✕ Hide."""
+        alerts = {k: v for k, v in alerts.items() if k not in self.hidden}
         for key in list(self.banners):
             if key not in alerts:
                 self.banners.pop(key).deleteLater()
@@ -228,7 +256,8 @@ class AlertArea(QWidget):
         for key, (sev, text, action) in ordered:
             b = self.banners.get(key)
             if b is None:
-                b = Banner(sev, text, action)
+                light = sev != "critical"
+                b = Banner(sev, text, action, light=light, on_hide=(lambda k=key: self._hide(k)) if light else None)
                 self.banners[key] = b
             else:
                 b.update_content(sev, text)
