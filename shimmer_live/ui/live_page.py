@@ -58,6 +58,21 @@ pg.setConfigOptions(antialias=True, background=SURFACE, foreground=MUTED)
 DEVICE_CARD_WIDTH = 340
 
 
+class PlotsView(pg.GraphicsLayoutWidget):
+    """The plots: no mouse zoom or pan (each y axis follows its data by itself). A wheel / two-finger scroll
+    over them scrolls the list of plots instead."""
+
+    def wheelEvent(self, ev):
+        w = self.parentWidget()
+        while w is not None and not isinstance(w, QScrollArea):
+            w = w.parentWidget()
+        if w is None:
+            ev.ignore()
+            return
+        QApplication.sendEvent(w.verticalScrollBar(), ev)    # scroll the plot list, never zoom
+        ev.accept()
+
+
 class DeviceCard(QFrame):
     def __init__(self, session: ShimmerSession, page):
         super().__init__()
@@ -304,7 +319,7 @@ class LivePage(QWidget):
         self.btn_show_panel.setVisible(False)
         body.addWidget(self.btn_show_panel)
         plots_col = QVBoxLayout()
-        self.glw = pg.GraphicsLayoutWidget()
+        self.glw = PlotsView()
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -575,7 +590,7 @@ class LivePage(QWidget):
                 p.getAxis(side).setTickFont(QFont(QApplication.font().family(), int(round(FONT_XS))))
                 # Auto SI prefix re-renders the axis label (HTML) on every range change: 20k+/15 s.
                 p.getAxis(side).enableAutoSIPrefix(False)
-            p.setMouseEnabled(x=False, y=True)
+            p.setMouseEnabled(x=False, y=False)         # y follows the data (_update_plots); no zoom
             # Y range is set by _update_plots (sticky_range). pyqtgraph's auto range ran during
             # painting, changed the range and so painted every frame twice.
             p.disableAutoRange()
@@ -603,9 +618,7 @@ class LivePage(QWidget):
             value.setParentItem(p)
             value.anchor(itemPos=(1, 0), parentPos=(1, 0), offset=(-8, 0))
             entry = {"kind": kind, "session": s, "binding": b, "index": i, "spec": spec, "plot": p,
-                     "curve": curve, "value": value, "yr": None, "manual_y": False}
-            # Zoomed with the mouse wheel: leave that plot's y range to the user.
-            p.vb.sigRangeChangedManually.connect(lambda *_, e=entry: e.__setitem__("manual_y", True))
+                     "curve": curve, "value": value, "yr": None}
             self._plots.append(entry)
             for m in self.marks:
                 self._add_mark_line(m, p, label=(row == 0))
@@ -637,13 +650,12 @@ class LivePage(QWidget):
                 t, y = t[m], y[0, m]
                 e["curve"].setData(t, y)
             e["plot"].setXRange(x0, now, padding=0)
-            if not e["manual_y"]:
-                v = y[(t >= x0) & np.isfinite(y)]
-                if v.size:
-                    r = sticky_range(e["yr"], float(v.min()), float(v.max()))
-                    if r is not None:
-                        e["yr"] = r
-                        e["plot"].setYRange(*r, padding=0)
+            v = y[(t >= x0) & np.isfinite(y)]      # y axis: min..max of what is in the window
+            if v.size:
+                r = sticky_range(e["yr"], float(v.min()), float(v.max()))
+                if r is not None:
+                    e["yr"] = r
+                    e["plot"].setYRange(*r, padding=0)
         self._prune_marks(now)
 
     # ---------------- status, alerts ----------------
