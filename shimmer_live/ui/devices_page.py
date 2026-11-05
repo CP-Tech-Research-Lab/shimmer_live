@@ -35,9 +35,11 @@ BLUE = "#1f4e8c"
 COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Firmware", "Sensors", "Rate", "Battery", "Status", ""]
 C_STATUS, C_GEAR = 8, 9
 IDLE_GREY = "#a6a6a2"         # not docked and not found nearby: switched off, far away or an old pairing
-PRESENCE_SCAN_S = 10          # each background search for paired Shimmers that are not docked...
-PRESENCE_PAUSE_MS = 5000      # ...then a pause, so Bluetooth is free most of the time
-PRESENT_S = 45                # found less than this long ago: counts as nearby (one missed search is normal)
+PRESENCE_SCAN_S = 12          # each round of knocks on paired Shimmers that are not docked (Bluetooth budget)...
+PRESENCE_PAUSE_MS = 3000      # ...then a pause, so Bluetooth is free part of the time
+PRESENT_S = 120               # answered less than this long ago (found ones are re-checked every round)
+TICKED_HEAD_START_S = 20      # ticked Shimmers that are not found are checked again sooner than the others
+MISSES_TO_GREY = 2            # a found Shimmer turns grey after this many knocks in a row without answer
 TIPS = {
     "refresh": "Read again which Shimmers are paired with this computer and, if a base is connected, which are "
                "docked in it.",
@@ -163,8 +165,10 @@ class DevicesPage(QWidget):
         # Background search for paired Shimmers that are not docked: only those found nearby (or docked)
         # can be ticked for live data or SD recording.
         self.presence = backend is not None   # False: the backend cannot tell, every pairing stays usable
-        self.nearby = {}                       # mac -> (time.monotonic() when found, rssi or None)
-        self.presence_rounds = 0               # searches completed while this page was shown
+        self.nearby = {}                       # mac -> time.monotonic() of its last answer
+        self.misses = {}                       # mac -> knocks in a row without answer
+        self.checked = set()                   # macs knocked at least once since the page was shown
+        self.last_knock = {}                   # mac -> time.monotonic() of its last knock (rotation)
         self._presence_running = False
         self._shown = False
         self._manual_scan = False
@@ -426,7 +430,7 @@ class DevicesPage(QWidget):
         if r.slot or not self.presence:
             return True
         seen = self.nearby.get(r.mac)
-        return seen is not None and time.monotonic() - seen[0] < PRESENT_S
+        return seen is not None and time.monotonic() - seen < PRESENT_S
 
     def _is_idle(self, r: Row) -> bool:
         """Not in a base, not in use and not found nearby: shown in grey, cannot be ticked."""
@@ -443,10 +447,18 @@ class DevicesPage(QWidget):
         if self._shown and self.presence:
             self._presence_timer.start(ms)
 
+    def _knock_order(self, macs):
+        """Found ones first (confirm they are still on, ~1 s each), then the ones not checked yet since the page
+        was shown, then the rest by the time of their last knock, oldest first; ticked ones count as knocked
+        TICKED_HEAD_START_S earlier, so they come round more often without starving the others."""
+        ticked = set(self.cfg.data.get("selected", []))
+        return sorted(macs, key=lambda m: (m not in self.nearby, m in self.checked,
+                                           self.last_knock.get(m, 0.0) - (TICKED_HEAD_START_S if m in ticked else 0)))
+
     def _presence_scan(self):
         if self._presence_running or not self.presence:
             return
-        want = [r.mac for r in self.rows if r.paired and not r.slot and r.mac]
+        want = self._knock_order([r.mac for r in self.rows if r.paired and not r.slot and r.mac])
         if not want or self._presence_should_stop():
             self._presence_next(2000)
             return
@@ -454,37 +466,40 @@ class DevicesPage(QWidget):
         stop = self._presence_should_stop
 
         def work():
-            seen = self.backend.nearby(want, PRESENCE_SCAN_S, stop)
-            return seen, stop()
+            return self.backend.nearby(want, PRESENCE_SCAN_S, stop,
+                                       lambda mac, ok: ui_call(self._knock_result, mac, ok))
 
-        def done(res):
-            seen, interrupted = res
+        def done(answers):
             self._presence_running = False
-            if seen is None:                               # this computer cannot tell: keep every pairing usable
-                log.info("searching for Shimmers nearby is not supported here")
+            if answers is None:                            # this computer cannot tell: keep every pairing usable
+                log.info("checking which Shimmers are switched on is not supported here")
                 self.presence = False
                 self._render_table()
                 return
-            now = time.monotonic()
-            for mac, rssi in seen.items():
-                if mac not in self.nearby or not self._recently_seen(mac):
-                    log.info("%s found nearby%s", self._name_of(mac), f" ({rssi} dBm)" if rssi is not None else "")
-                self.nearby[mac] = (now, rssi)
-            if not interrupted:
-                self.presence_rounds += 1
-            self._render_table()
             self._presence_next()
 
         def failed(e):
             self._presence_running = False
-            log.info("search for Shimmers nearby failed: %s", e)
-            self._presence_next(PRESENCE_PAUSE_MS * 2)
+            log.info("checking for Shimmers nearby failed: %s", e)
+            self._presence_next(PRESENCE_PAUSE_MS * 3)
 
         run_bg(work, done, failed, "nearby")
 
-    def _recently_seen(self, mac) -> bool:
-        seen = self.nearby.get(mac)
-        return seen is not None and time.monotonic() - seen[0] < PRESENT_S
+    def _knock_result(self, mac, ok):
+        """One Shimmer checked: shown at once (not at the end of the round)."""
+        now = time.monotonic()
+        self.checked.add(mac)
+        self.last_knock[mac] = now
+        if ok:
+            if mac not in self.nearby:
+                log.info("%s is switched on nearby", self._name_of(mac))
+            self.nearby[mac], self.misses[mac] = now, 0
+        else:
+            self.misses[mac] = self.misses.get(mac, 0) + 1
+            if mac in self.nearby and self.misses[mac] >= MISSES_TO_GREY:
+                log.info("%s no longer answers (switched off or out of range?)", self._name_of(mac))
+                self.nearby.pop(mac, None)
+        self._render_table()
 
     def _name_of(self, mac) -> str:
         return next((r.name for r in self.rows if r.mac == mac), mac)
@@ -542,7 +557,7 @@ class DevicesPage(QWidget):
             t.setItem(i, 1, name)
             unknown = not r.slot and (self.base.state == "checking" or self.base.reading)
             where = QTableWidgetItem(self._where_text(r, unknown))
-            searching = not r.slot and self.presence and not self._present(r) and self.presence_rounds == 0
+            searching = not r.slot and self.presence and not self._present(r) and r.mac not in self.checked
             where.setForeground(QColor("#1f1f1e" if r.slot else WARNING if unknown or searching
                                        else GOOD if self.presence and self._present(r) else MUTED))
             where.setToolTip(self._where_tip(r, unknown))
@@ -602,7 +617,7 @@ class DevicesPage(QWidget):
             return "not docked"
         if self._present(r):
             return "nearby"
-        return "searching…" if self.presence_rounds == 0 else "not found"
+        return "searching…" if r.mac not in self.checked else "not found"
 
     def _where_tip(self, r: Row, unknown: bool) -> str:
         if r.slot:
@@ -611,13 +626,14 @@ class DevicesPage(QWidget):
             return "Still reading the base: this Shimmer may be docked"
         if not self.presence:
             return "Not in a base"
-        seen = self.nearby.get(r.mac)
         if self._present(r):
-            ago = time.monotonic() - seen[0]
-            return (f"Switched on and in range: found {ago:.0f} s ago"
-                    + (f" · signal {self._signal_text(seen[1])}" if seen[1] is not None else ""))
-        return ("Not in a base and not found switched on nearby. The app searches every few seconds while this "
-                "page is open; switch it on (blue blink every 2 s) and bring it closer.")
+            return (f"Switched on and in range: it answered {time.monotonic() - self.nearby[r.mac]:.0f} s ago "
+                    "(checked again every few seconds)")
+        if r.mac not in self.checked:
+            return "Not checked yet: the app is asking the paired Shimmers one after the other"
+        return ("Not in a base and it did not answer: switched off, out of range or connected to another program. "
+                "Switch it on (blue blink every 2 s): it turns bright at its next check (switched-off Shimmers "
+                "take ~5 s each to check, so with many of them this can take up to a minute).")
 
     def _render_found(self):
         known = {r.mac for r in self.rows}
@@ -757,9 +773,9 @@ class DevicesPage(QWidget):
             self.busy.pop(mac, None)
             if res.get("ok"):
                 self.needs_restart.discard(mac)       # it answers over Bluetooth: the update is finished
-                self.nearby[mac] = (time.monotonic(), None)        # it answered: it is switched on and in range
-            else:
-                self.nearby.pop(mac, None)
+                self.nearby[mac] = time.monotonic()                # it answered: it is switched on and in range
+                self.misses[mac] = 0
+                self.checked.add(mac)
             self._render_table()
             log.info("%s test: %s", name, describe_check(res)[0])
             if then:
@@ -919,7 +935,7 @@ class DevicesPage(QWidget):
         super().showEvent(ev)
         self.base.start()                    # watch USB for a base only while this page is visible
         self._shown = True
-        self.presence_rounds = 0             # "searching…" again until the first search after coming back
+        self.checked = set()                 # "searching…" again until each has been checked after coming back
         self._presence_next(300)
 
     def hideEvent(self, ev):

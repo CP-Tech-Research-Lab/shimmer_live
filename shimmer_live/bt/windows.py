@@ -11,6 +11,7 @@ driver and device firmware. Preserve existing pairings after transient failures.
 import asyncio
 import logging
 import threading
+import time
 
 from .base import (NOT_RESPONDING_HINT, BackendUnavailable, BluetoothBackend, BtDevice,
                    PairingError)
@@ -18,33 +19,21 @@ from .base import (NOT_RESPONDING_HINT, BackendUnavailable, BluetoothBackend, Bt
 log = logging.getLogger("shimmerlive.winrt")
 
 try:
-    from winrt.windows.devices.bluetooth import BluetoothDevice
-    from winrt.windows.devices.enumeration import (DeviceInformation, DeviceInformationKind, DevicePairingKinds,
+    from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothDevice, BluetoothError
+    from winrt.windows.devices.enumeration import (DeviceInformation, DevicePairingKinds,
                                                    DevicePairingResultStatus)
 except ImportError as e:     # pragma: no cover - only on Windows
     raise BackendUnavailable(
         "Windows Bluetooth support needs the WinRT packages: pip install -r requirements.txt") from e
+try:                         # result type of get_rfcomm_services_async (knocks); optional: older installs lack it
+    import winrt.windows.devices.bluetooth.rfcomm  # noqa: F401
+    HAVE_RFCOMM = True
+except ImportError:          # pragma: no cover
+    HAVE_RFCOMM = False
 
 
 def _mac_from_int(a: int) -> str:
     return ":".join(f"{(a >> (8 * i)) & 0xFF:02X}" for i in reversed(range(6)))
-
-
-def _prop(props, key, unbox_name):
-    """A DeviceInformation property, unboxed (pywinrt 4 hands boxed IInspectable values)."""
-    try:
-        if not props.has_key(key):
-            return None
-        v = props.lookup(key)
-    except Exception:                                       # noqa: BLE001
-        return None
-    if v is None:
-        return None
-    try:
-        import winrt.system as wsys
-        return getattr(wsys, unbox_name)(v)
-    except Exception:                                       # noqa: BLE001 - already a plain value
-        return v
 
 
 async def _find_all(selector):
@@ -129,28 +118,36 @@ class WindowsBackend(BluetoothBackend):
         on_update(found)
         return found
 
-    def nearby(self, addresses, seconds, should_stop=lambda: False):
-        """One inquiry over the Bluetooth (classic) association endpoints, paired ones included: Windows marks
-        the ones that answered as present."""
-        try:
-            return self._run(self._nearby({a.upper() for a in addresses}), max(60, seconds + 45))
-        except Exception as e:                              # noqa: BLE001 - presence is best effort
-            log.info("nearby search failed: %s", e)
+    def nearby(self, addresses, seconds, should_stop=lambda: False, on_result=None):
+        """Knock on each device in turn until `seconds` have been spent: an uncached SDP query (service list)
+        goes over the air and succeeds only if the device is switched on and in range. The same check as on
+        Linux; Windows' cached 'IsPresent' flag is not trusted."""
+        if not HAVE_RFCOMM:
+            log.info("winrt-Windows.Devices.Bluetooth.Rfcomm missing: run setup_windows.bat to search for Shimmers")
             return None
+        out = {}
+        end = time.monotonic() + seconds
+        for addr in addresses:
+            if should_stop() or (out and time.monotonic() >= end):
+                break
+            try:
+                out[addr.upper()] = bool(self._run(self._knock(addr.upper()), 20))
+            except Exception as e:                          # noqa: BLE001 - counts as no answer
+                log.info("%s: no answer (%s)", addr, e)
+                out[addr.upper()] = False
+            if on_result:
+                on_result(addr.upper(), out[addr.upper()])
+        return out
 
-    async def _nearby(self, want):
-        aqs = 'System.Devices.Aep.ProtocolId:="{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}"'
-        props = ["System.Devices.Aep.DeviceAddress", "System.Devices.Aep.IsPresent",
-                 "System.Devices.Aep.SignalStrength"]
-        infos = await DeviceInformation.find_all_async(aqs, props, DeviceInformationKind.ASSOCIATION_ENDPOINT)
-        seen = {}
-        for info in infos:
-            p = info.properties
-            addr = str(_prop(p, "System.Devices.Aep.DeviceAddress", "unbox_string") or "").upper()
-            if addr in want and _prop(p, "System.Devices.Aep.IsPresent", "unbox_boolean"):
-                rssi = _prop(p, "System.Devices.Aep.SignalStrength", "unbox_int32")
-                seen[addr] = int(rssi) if rssi is not None else None
-        return seen
+    async def _knock(self, addr):
+        bt = await BluetoothDevice.from_bluetooth_address_async(int(addr.replace(":", ""), 16))
+        if bt is None:
+            return False
+        try:
+            r = await bt.get_rfcomm_services_async(BluetoothCacheMode.UNCACHED)
+            return r.error == BluetoothError.SUCCESS and r.services.size > 0
+        finally:
+            bt.close()
 
     def find(self, addresses, timeout=20.0):
         """Open each device straight from its address: no inquiry scan needed on Windows."""

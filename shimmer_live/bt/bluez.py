@@ -5,8 +5,12 @@ radios (RN42 -> PIN 1234) are routed to the application UI. The agent is not mad
 system default, so the desktop's own Bluetooth agent is left untouched.
 """
 import asyncio
+import errno
 import logging
+import select
+import socket
 import threading
+import time
 
 from dbus_fast import BusType, DBusError, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
@@ -28,6 +32,59 @@ class BluezError(Exception):
     def __init__(self, name, text):
         super().__init__(f"{name}: {text}")
         self.name, self.text = name, text
+
+
+KNOCK_TIMEOUT_S = 7.0          # above the controller's 5.12 s page timeout
+
+
+ANSWERED = (0, errno.ECONNREFUSED)                       # refused also means: it is there and answered
+TRANSIENT = (errno.ECONNABORTED, errno.EBUSY, errno.EAGAIN, errno.EALREADY, errno.ECONNRESET)
+log_knock = logging.getLogger("shimmerlive.bluez.knock")
+
+
+def _knock_once(address, should_stop):
+    """errno of one bare L2CAP (SDP) connection attempt (0 = connected), None if interrupted."""
+    s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+    try:
+        s.setblocking(False)
+        err = s.connect_ex((address, 1))
+        if err not in (0, errno.EINPROGRESS):
+            return err
+        end = time.monotonic() + KNOCK_TIMEOUT_S
+        while err != 0:
+            if should_stop():
+                return None
+            if time.monotonic() > end:
+                return errno.ETIMEDOUT
+            _, w, x = select.select([], [s], [s], 0.2)
+            if w or x:
+                return s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+        return 0
+    except OSError as e:
+        return e.errno or errno.EIO
+    finally:
+        s.close()
+
+
+def knock(address, should_stop=lambda: False):
+    """True if the device answers a bare L2CAP (SDP) connection, False if not, None if interrupted.
+    A quick 'aborted'/'busy' (e.g. the link of the previous knock still closing) is retried: it is not an
+    answer either way."""
+    for attempt in range(3):
+        err = _knock_once(address, should_stop)
+        if err is None:
+            return None
+        if err in ANSWERED:
+            return True
+        if err not in TRANSIENT:
+            log_knock.debug("%s: %s", address, errno.errorcode.get(err, err))
+            return False
+        log_knock.debug("%s: %s, retrying", address, errno.errorcode.get(err, err))
+        for _ in range(10):                           # 1 s, still interruptible
+            if should_stop():
+                return None
+            time.sleep(0.1)
+    return False
 
 
 def _v(props, key, default=None):
@@ -224,37 +281,27 @@ class BluezBackend(BluetoothBackend):
                 pass
         return list(seen.values())
 
-    def nearby(self, addresses, seconds, should_stop=lambda: False):
-        return self._run(self._nearby({a.upper() for a in addresses}, seconds, should_stop), seconds + 15)
+    def nearby(self, addresses, seconds, should_stop=lambda: False, on_result=None):
+        """Knock on each Shimmer in turn (in the given order) until `seconds` have been spent: a bare L2CAP
+        connection to its SDP service, which any Bluetooth device accepts when it is switched on and in range,
+        without opening the data channel. Verified on Shimmer3s: on ones answer in 0.7-1.7 s, off ones fail
+        after the 5.1 s page timeout ("Host is down").
 
-    async def _nearby(self, want, seconds, should_stop):
-        # BlueZ sets a device's RSSI only while a discovery is running and it answered the inquiry
-        # (cleared when discovery stops), also for paired devices: that is "switched on and in range".
-        try:
-            await self._call(self.adapter, ADAPTER, "SetDiscoveryFilter", "a{sv}",
-                             [{"Transport": Variant("s", "bredr")}])
-        except BluezError:
-            pass
-        try:
-            await self._call(self.adapter, ADAPTER, "StartDiscovery")
-        except BluezError as e:
-            if "InProgress" not in e.name:
-                raise
-        seen = {}
-        loop = asyncio.get_running_loop()
-        end = loop.time() + seconds
-        try:
-            while loop.time() < end and want - set(seen) and not should_stop():
-                for d in await self._devices():
-                    if d.address in want and (d.rssi is not None or d.connected):
-                        seen[d.address] = d.rssi
-                await asyncio.sleep(0.5)
-        finally:
-            try:
-                await self._call(self.adapter, ADAPTER, "StopDiscovery")
-            except BluezError:
-                pass
-        return seen
+        Why not a discovery: while any other program keeps a discovery running (KDE does), BlueZ keeps every
+        device's last RSSI and reports no repeats, so a device switched off hours ago still looks present.
+        Knocks cannot overlap (the controller pages one device at a time), hence the order and the budget."""
+        out = {}
+        end = time.monotonic() + seconds
+        for addr in addresses:
+            if should_stop() or (out and time.monotonic() >= end):
+                break
+            ok = knock(addr, should_stop)
+            if ok is None:                    # interrupted: Bluetooth is needed for something else
+                break
+            out[addr.upper()] = ok
+            if on_result:
+                on_result(addr.upper(), ok)
+        return out
 
     def find(self, addresses, timeout=20.0):
         """Targeted scan: stop as soon as every requested address has been seen."""

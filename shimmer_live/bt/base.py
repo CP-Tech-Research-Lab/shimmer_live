@@ -71,10 +71,11 @@ class BluetoothBackend:
     def forget(self, device: BtDevice) -> None:
         raise NotImplementedError
 
-    def nearby(self, addresses, seconds: float, should_stop=lambda: False):
-        """Which of these (paired) devices answer a Bluetooth inquiry right now: {address: rssi or None}.
-
-        Stops early when all were seen or should_stop() becomes true. None: not supported here."""
+    def nearby(self, addresses, seconds: float, should_stop=lambda: False, on_result=None):
+        """Check which of these paired devices are switched on and in range: {address: True/False} for the ones
+        checked (a backend may check only the first few within `seconds`). Stops when should_stop() becomes
+        true; on_result(address, ok) is called (any thread) as each check finishes. None: this backend cannot
+        tell."""
         return None
 
     def find(self, addresses, timeout: float = 20.0) -> dict:

@@ -193,14 +193,18 @@ class FakeBackend:
     def __init__(self, around):
         self.around, self.asked = around, []
 
-    def nearby(self, addresses, seconds, should_stop=lambda: False):
-        self.asked.append(sorted(addresses))
-        return {a: -60 for a in addresses if a in self.around}
+    def nearby(self, addresses, seconds, should_stop=lambda: False, on_result=None):
+        self.asked.append(list(addresses))
+        out = {a: a in self.around for a in addresses}
+        for a, ok in out.items():
+            on_result(a, ok)
+        return out
 
 
 def test_only_shimmers_found_nearby_or_docked_can_be_ticked(page, monkeypatch):
     import shimmer_live.ui.devices_page as dpm
     monkeypatch.setattr(dpm, "run_bg", lambda fn, done=None, failed=None, name=None: done(fn()))
+    monkeypatch.setattr(dpm, "ui_call", lambda fn, *a: fn(*a))
     near, far, docked = "40:84:32:56:A2:81", "00:06:66:B9:86:84", "40:84:32:56:A1:87"
     page.backend, page.presence, page._shown = FakeBackend({near}), True, True
     page.paired = [BtDevice(m, n, True) for m, n in ((near, "Shimmer3-A281"), (far, "Shimmer3-8684"),
@@ -211,7 +215,7 @@ def test_only_shimmers_found_nearby_or_docked_can_be_ticked(page, monkeypatch):
     assert cells(page)["Shimmer3-A281"][0] == "searching…"
     assert page.checked_devices() == [(docked, "Shimmer3-A187")]       # nothing found yet: only the docked one
     page._presence_scan()
-    assert page.backend.asked == [sorted([near, far])]                  # docked ones are not searched for
+    assert sorted(page.backend.asked[0]) == sorted([near, far])         # docked ones are not searched for
     assert cells(page)["Shimmer3-A281"][0] == "nearby" and cells(page)["Shimmer3-8684"][0] == "not found"
     assert sorted(m for m, _ in page.checked_devices()) == sorted([near, docked])
     rows = {page.table.item(r, 1).text(): r for r in range(page.table.rowCount())}
@@ -223,6 +227,20 @@ def test_only_shimmers_found_nearby_or_docked_can_be_ticked(page, monkeypatch):
     page.backend.around = {far}                                       # switched on later: it becomes usable
     page._presence_scan()
     assert (far, "Shimmer3-8684") in page.checked_devices()
+    assert page.backend.asked[-1][0] == near                            # found ones are re-checked first
+    page._presence_scan()                                               # A281 missed twice: now grey
+    assert cells(page)["Shimmer3-A281"][0] == "not found"
+
+
+def test_knock_order_found_then_ticked_then_longest_ago(page):
+    a, b, c, d = "AA:00:00:00:00:01", "AA:00:00:00:00:02", "AA:00:00:00:00:03", "AA:00:00:00:00:04"
+    page.nearby = {c: 1.0}
+    page.cfg.data["selected"] = [d]
+    page.last_knock = {a: 5.0, b: 2.0}
+    assert page._knock_order([a, b, c, d]) == [c, d, b, a]
+    page.checked = {d, b}                                  # d and b already checked: a goes first
+    page.last_knock = {a: 100.0, b: 90.0, d: 105.0}        # d ticked: counts as knocked at 85
+    assert page._knock_order([a, b, c, d]) == [c, a, d, b]
 
 
 def test_search_pauses_while_bluetooth_is_busy(page, monkeypatch):
