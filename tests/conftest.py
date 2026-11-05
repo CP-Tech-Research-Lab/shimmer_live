@@ -1,3 +1,4 @@
+import gc
 import sys
 from pathlib import Path
 
@@ -10,6 +11,15 @@ sys.path.insert(0, str(ROOT))
 from shimmer_live import clocks  # noqa: E402
 from shimmer_live.config import Config  # noqa: E402
 from shimmer_live.session import ShimmerSession, State  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _collect_garbage_on_main_thread():
+    """As in the app (ui.common.collect_garbage_on_gui_thread): never let the cyclic collector run on a
+    worker thread, where it would destroy leftover Qt widgets and crash Qt at exit."""
+    gc.disable()
+    yield
+    gc.collect()
+
 
 GSR_CHANNELS = [E.VBATT, E.GSR_RAW]
 ECG_CHANNELS = [E.VBATT, E.EXG_ADS1292R_1_STATUS, E.EXG_ADS1292R_1_CH1_24BIT, E.EXG_ADS1292R_1_CH2_24BIT,
@@ -76,3 +86,22 @@ def feed(session, clock, chans, n, start_ts, **values):
 def reconnect(session):
     """What _open() does on a new connection: the next packet starts a new streaming period."""
     session._prev_ts = None
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Delete the windows tests left open while Qt is still fully alive: left to Qt's own teardown at
+    interpreter exit, a half-destroyed one can segfault (after every test has passed)."""
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    for w in app.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    app.processEvents()
+    gc.collect()

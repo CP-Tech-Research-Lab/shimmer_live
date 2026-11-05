@@ -137,7 +137,15 @@ class QtLogHandler(logging.Handler):
         self.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
 
     def emit(self, record):
-        ui_call(self.widget.appendPlainText, self.format(record))
+        ui_call(self._append, self.format(record))
+
+    def _append(self, text):
+        # The Log tab may be gone (page deleted): detach instead of failing, since a failure would be logged
+        # here again, forever.
+        try:
+            self.widget.appendPlainText(text)
+        except RuntimeError:
+            logging.getLogger("shimmerlive").removeHandler(self)
 
 
 def _button(text, tip, role=None):

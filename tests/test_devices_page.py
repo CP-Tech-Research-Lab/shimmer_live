@@ -18,7 +18,11 @@ def page(tmp_path):
     init_bridge()
     p = DevicesPage(Config(tmp_path / "cfg.json"), None, "no Bluetooth in test")
     yield p
+    p._shown = False
+    p._presence_timer.stop()
     p.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)    # really delete it now, not at exit
 
 
 class FakeLink:

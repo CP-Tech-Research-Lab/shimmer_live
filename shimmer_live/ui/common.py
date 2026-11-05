@@ -2,7 +2,7 @@
 import logging
 import threading
 
-from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QVBoxLayout, QWidget
 
 log = logging.getLogger("shimmerlive.ui")
@@ -131,23 +131,60 @@ def init_bridge():
     _bridge = _Bridge()
 
 
+def collect_garbage_on_gui_thread(parent):
+    """Python's cyclic garbage collector runs on whichever thread happens to allocate when it triggers. On a
+    worker thread (Bluetooth, plugins, TCP keypoints, ...) it destroys unreachable Qt widgets there, which
+    later crashes Qt (seen: segfaults on a click and at exit). So automatic collection is switched off and
+    run here instead, on the GUI thread: young objects every second, everything every minute."""
+    import gc
+    gc.disable()
+    state = {"n": 0}
+
+    def tick():
+        state["n"] += 1
+        gc.collect(2 if state["n"] % 60 == 0 else 1 if state["n"] % 10 == 0 else 0)
+
+    t = QTimer(parent)
+    t.timeout.connect(tick)
+    t.start(1000)
+    return t
+
+
 def ui_call(fn, *args, **kwargs):
     """Run fn on the GUI thread (safe from any thread)."""
     _bridge.sig.emit(lambda: fn(*args, **kwargs))
 
 
+def _deliver(payload):
+    """GUI thread: run the callback, then drop every reference the worker had (see run_bg)."""
+    callback, arg = payload[1], payload[2]
+    try:
+        if callback is not None:
+            callback(arg)
+    finally:
+        payload.clear()
+
+
 def run_bg(fn, on_done=None, on_fail=None, name="worker"):
-    """Run fn on a background thread; deliver result/exception on the GUI thread."""
+    """Run fn on a background thread; deliver result/exception on the GUI thread.
+
+    The worker never drops the last reference to fn or the callbacks: they usually capture widgets, and a
+    Qt object whose Python wrapper dies on a worker thread is destroyed later from the GUI thread at an
+    arbitrary moment, which can crash the app (seen: a crash on a button click after a background test).
+    Everything is handed back to the GUI thread and released there."""
+    box = [fn, on_done, on_fail]
+
     def work():
+        f, done, fail = box
+        box.clear()
         try:
-            r = fn()
+            payload = [(f, done, fail), done, f()]
         except Exception as e:      # noqa: BLE001
             log.info("%s failed: %s", name, e)
-            if on_fail:
-                ui_call(on_fail, e)
-        else:
-            if on_done:
-                ui_call(on_done, r)
+            payload = [(f, done, fail), fail, e]
+        del f, done, fail
+        ui_call(_deliver, payload)
+
     threading.Thread(target=work, daemon=True, name=name).start()
 
 

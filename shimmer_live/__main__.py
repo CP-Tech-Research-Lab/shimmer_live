@@ -6,7 +6,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from .config import Config, config_dir
-from .ui.common import STYLESHEET, init_bridge
+from .ui.common import STYLESHEET, collect_garbage_on_gui_thread, init_bridge
 from .ui.main_window import MainWindow
 
 
@@ -31,6 +31,7 @@ def main():
         pass
     app.setStyleSheet(STYLESHEET)
     init_bridge()
+    gc_timer = collect_garbage_on_gui_thread(app)          # noqa: F841 - kept alive with the app
     win = MainWindow(Config())
     win.showMaximized()                    # fills the screen; F11 toggles true full screen
     sys.exit(app.exec())
