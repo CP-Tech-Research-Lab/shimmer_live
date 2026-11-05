@@ -35,6 +35,13 @@ from shimmer_live.config import Config  # noqa: E402
 
 INFOMEM_SIZE, INFOMEM_CHUNK = 512, 128
 SELF_SET_BITS = [(230, 0x01)]          # the firmware sets this bit itself on every config write
+# InfoMem byte 217 (SDTrialConfig0) bit 3 = bluetoothDisable. Firmware 0.x ignores it, 1.x obeys it:
+# F66C (0.15 -> 1.01.009) came back with classic Bluetooth off. Working 1.0.5 units have it clear.
+TRIAL_CONFIG0, BT_DISABLE = 217, 0x08
+
+
+def version_tuple(text):
+    return tuple(int(x) for x in text.split()[-1].split("."))
 
 
 def log(msg):
@@ -182,6 +189,12 @@ def main(argv):
             (out / "infomem_new_defaults.bin").write_bytes(defaults)
             diff = [i for i in range(INFOMEM_SIZE) if defaults[i] != infomem[i]]
             log(f"new firmware's defaults differ from the saved configuration at {len(diff)} byte(s)")
+            restore = bytearray(infomem)
+            if version_tuple(before) < (1, 0, 0) <= version_tuple(after) and restore[TRIAL_CONFIG0] & BT_DISABLE:
+                restore[TRIAL_CONFIG0] &= ~BT_DISABLE & 0xFF
+                log("cleared 'Bluetooth disabled' (byte 217 bit 3): ignored by 0.x, it would switch Bluetooth "
+                    "off under 1.x")
+            infomem = bytes(restore)
             write_infomem(d, infomem)
             back = read_infomem(d)
             (out / "infomem_after.bin").write_bytes(back)
@@ -192,7 +205,8 @@ def main(argv):
         if bad:
             sys.exit(f"WARNING: configuration restored with differences at offsets {bad[:20]}; "
                      f"original in {out}/infomem_before.bin")
-        log(f"DONE: {before} -> {after}; configuration restored identical. Files in {out}")
+        log(f"DONE: {before} -> {after}; configuration restored. Files in {out}")
+        log("Switch the Shimmer off and on once: the firmware reads its configuration at power-on.")
 
 
 if __name__ == "__main__":

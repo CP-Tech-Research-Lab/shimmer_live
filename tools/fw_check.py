@@ -1,6 +1,7 @@
 """Before/after check for a firmware update: does the Shimmer still record the same way?
 
-    python tools/fw_check.py record <MAC> <label> [seconds]   e.g. record 60:8A:10:40:F6:6C before
+    python tools/fw_check.py record <MAC> <label> [seconds] [--ppg]   e.g. record 60:8A:10:40:F6:6C before
+                                       --ppg: rewrite the PPG probe's 3 V power first, as the app does
     python tools/fw_check.py compare <before.json> <after.json>
 
 `record` connects over Bluetooth (pairing first if needed, PIN 1234), reads the Shimmer's
@@ -64,7 +65,7 @@ def _settings(conn):
             "device_name": timed(conn.dev.get_device_name, 5.0)}, chans
 
 
-def record(mac, label, seconds=60.0):
+def record(mac, label, seconds=60.0, ppg=False):
     mac = mac.upper()
     cfg = Config()
     _ensure_paired(mac, cfg)
@@ -72,6 +73,10 @@ def record(mac, label, seconds=60.0):
     conn = sdlog.Connection(mac, cfg)
     try:
         settings, chans = _settings(conn)
+        if ppg:                                   # as the app does for a PPG probe: rewrite its 3 V power
+            from shimmer_live.expansion_power import rewrite_ppg_power
+            rewrite_ppg_power(conn.dev, timed)
+            settings["ppg_power_rewritten"] = True
         print(f"{settings['firmware']} · {settings['rate_hz']:g} Hz · {', '.join(settings['channels'])}"
               f" · 3 V expansion power: {settings['expansion_power_3v']}")
         gains = {tuple(int(x) for x in k.split(",")): g for k, g in settings["exg_gains"].items()}
@@ -196,7 +201,8 @@ def compare(a_path, b_path):
 
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "record":
-        record(sys.argv[2], sys.argv[3], float(sys.argv[4]) if len(sys.argv) > 4 else 60.0)
+        args = [a for a in sys.argv[2:] if a != "--ppg"]
+        record(args[0], args[1], float(args[2]) if len(args) > 2 else 60.0, ppg="--ppg" in sys.argv)
     elif len(sys.argv) == 4 and sys.argv[1] == "compare":
         sys.exit(0 if compare(sys.argv[2], sys.argv[3]) else 1)
     else:
