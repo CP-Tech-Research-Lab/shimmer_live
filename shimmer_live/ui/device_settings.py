@@ -25,7 +25,8 @@ def _fmt_rate(r: float) -> str:
 class DeviceSettingsDialog(QDialog):
     """Connects to a (non-streaming) Shimmer, shows its configuration and applies changes."""
 
-    def __init__(self, parent, mac, name, cfg, configurator=None):
+    def __init__(self, parent, mac, name, cfg, configurator=None, docked_where=None):
+        """docked_where: e.g. "base slot 2" when the Shimmer is in a base (offers Firmware…), else None."""
         super().__init__(parent)
         self.setWindowTitle(f"{name} — device settings")
         fit_to_screen(self, 760, 900)
@@ -33,6 +34,7 @@ class DeviceSettingsDialog(QDialog):
         self.conf = configurator or DeviceConfigurator(mac, cfg)
         self.info = None
         self.applied = False
+        self.wants_firmware = False
         self._busy = False
         self._closed = False
 
@@ -50,6 +52,13 @@ class DeviceSettingsDialog(QDialog):
         self.btn_clock.setToolTip("Sets the Shimmer's real-time clock (stops the blue/green 'RTC not set' blinking)")
         self.btn_clock.clicked.connect(self._set_clock)
         row.addWidget(self.btn_clock)
+        self.btn_fw = QPushButton("Firmware…")
+        self.btn_fw.setToolTip(f"Update this Shimmer's firmware through the base ({docked_where}). Its configuration "
+                               "is saved first and restored afterwards." if docked_where else
+                               "Firmware can be updated only while the Shimmer is in a base")
+        self.btn_fw.setVisible(docked_where is not None)
+        self.btn_fw.clicked.connect(self._firmware)
+        row.addWidget(self.btn_fw)
         row.addStretch(1)
         self.btn_apply = set_role(QPushButton("Apply changes"), "primary")
         self.btn_apply.setToolTip("Write the changed settings to the Shimmer and read them back to check them. "
@@ -371,6 +380,11 @@ class DeviceSettingsDialog(QDialog):
                 self.status.setText("✔ Settings written and verified on the Shimmer.")
 
         run_bg(work, done, self._failed, "settings-apply")
+
+    def _firmware(self):
+        """Close this dialog (and its Bluetooth link: the update resets the Shimmer), then update."""
+        self.wants_firmware = True
+        self.accept()
 
     def _set_clock(self):
         self._set_busy(True)

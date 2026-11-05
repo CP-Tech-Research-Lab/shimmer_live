@@ -207,3 +207,20 @@ def test_ppg_in_the_base_is_reported(tmp_path):
     conf.cfg.data['ppg_inputs'] = {conf.mac: True}
     chans = conf._dev.get_inquiry()[2]
     assert prepare_ppg(conf._dev, conf.cfg, conf.mac, chans, dc.timed) == {"docked": True}
+
+
+@pytest.mark.parametrize("where", [None, "base slot 2"])
+def test_firmware_button_only_for_a_shimmer_in_a_base(tmp_path, monkeypatch, where):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from shimmer_live.ui import device_settings as ui
+    QApplication.instance() or QApplication([])
+    conf = configurator(tmp_path, power=True)
+    conf.connect = lambda **kwargs: None
+    conf.close = lambda: None
+    monkeypatch.setattr(ui, "run_bg", lambda fn, done=None, failed=None, name=None: done(fn()) if done else fn())
+    dlg = ui.DeviceSettingsDialog(None, conf.mac, "Shimmer3-TEST", conf.cfg, configurator=conf, docked_where=where)
+    assert dlg.btn_fw.isVisibleTo(dlg) == (where is not None)
+    if where:
+        dlg.btn_fw.click()
+        assert dlg.wants_firmware                       # settings close first; the update opens afterwards

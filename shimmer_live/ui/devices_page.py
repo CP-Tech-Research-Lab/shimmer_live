@@ -508,11 +508,15 @@ class DevicesPage(QWidget):
         if docked is None:
             QMessageBox.information(self, "Update firmware", "Highlight one Shimmer that is in the base.")
             return
+        self._open_firmware(docked, r.name)
+
+    def _open_firmware(self, docked, name):
         if self.base.busy:
             QMessageBox.information(self, "Update firmware", "The base is busy (reading slots or setting up): "
                                                              "try again in a few seconds.")
             return
-        FirmwareDialog(self, self.base, docked, r.name, r.firmware).exec()
+        FirmwareDialog(self, self.base, docked, name, docked.info.firmware, self.cfg).exec()
+        self.refresh()
 
     def _update_buttons(self):
         sel = self.checked_devices()
@@ -572,10 +576,15 @@ class DevicesPage(QWidget):
     def _settings(self, mac, name):
         self.busy[mac] = "settings open"
         self._render_table()
-        dlg = DeviceSettingsDialog(self, mac, name, self.cfg)
+        docked = self.base.locate(mac)
+        dlg = DeviceSettingsDialog(self, mac, name, self.cfg,
+                                   docked_where=self.base.where(docked.unit, docked.slot) if docked else None)
         dlg.exec()
         self.busy.pop(mac, None)
         self._render_table()
+        if dlg.wants_firmware and docked is not None:
+            QTimer.singleShot(800, lambda: self._open_firmware(docked, name))   # let the Bluetooth link close first
+            return
         if dlg.applied:                        # refresh the row with what the device now reports
             QTimer.singleShot(1500, lambda: self._test(mac, name))
 

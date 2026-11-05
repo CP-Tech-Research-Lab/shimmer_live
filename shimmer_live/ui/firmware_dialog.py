@@ -6,16 +6,17 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMessage
                                QPushButton, QVBoxLayout)
 
 from .. import fw_update
+from ..session import probe_device
 from .common import CRITICAL, GOOD, MUTED, WARNING, run_bg, set_role, ui_call
 
 log = logging.getLogger("shimmerlive.ui.firmware")
 
 
 class FirmwareDialog(QDialog):
-    def __init__(self, parent, watcher, docked, name: str, current: str):
+    def __init__(self, parent, watcher, docked, name: str, current: str, cfg=None):
         """docked: base_panel.Docked for the Shimmer (its base link and slot)."""
         super().__init__(parent)
-        self.watcher, self.docked, self.name, self.current = watcher, docked, name, current
+        self.watcher, self.docked, self.name, self.current, self.cfg = watcher, docked, name, current, cfg
         self.running = False
         self.setWindowTitle(f"Update firmware — {name}")
         self.setMinimumWidth(620)
@@ -53,6 +54,7 @@ class FirmwareDialog(QDialog):
         lay.addWidget(self.bar)
         self.status = QLabel()
         self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.RichText)
         lay.addWidget(self.status)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -64,6 +66,12 @@ class FirmwareDialog(QDialog):
         btns.addStretch(1)
         self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.reject)
+        self.btn_test = QPushButton("Test connection")
+        self.btn_test.setToolTip("After switching the Shimmer off and on: connect over Bluetooth and read its "
+                                 "firmware, sensors and battery")
+        self.btn_test.clicked.connect(self._test)
+        self.btn_test.setVisible(False)
+        btns.addWidget(self.btn_test)
         self.btn_go = set_role(QPushButton("Update firmware"), "primary")
         self.btn_go.setToolTip("Back up the configuration, write and verify the new firmware, restore the configuration")
         self.btn_go.clicked.connect(self._start)
@@ -154,7 +162,9 @@ class FirmwareDialog(QDialog):
             self.log.appendPlainText(f"the new firmware adjusted byte {off} ({label})")
         self.status.setText(f"<span style='color:{GOOD}; font-weight:700'>Done: {r.before} → {r.after}</span> in "
                             f"{r.seconds:.0f} s. <b>Now switch {self.name} off and on once</b>, then press "
-                            f"<i>Test connection</i>. Backup: {r.backup_dir}")
+                            f"<i>Test connection</i> below. Backup: {r.backup_dir}")
+        self.btn_test.setVisible(self.cfg is not None)
+        self.btn_go.setVisible(False)
         self.status.setTextFormat(Qt.RichText)
         log.info("%s firmware updated: %s -> %s", self.name, r.before, r.after)
 
@@ -166,3 +176,26 @@ class FirmwareDialog(QDialog):
         self.btn_go.setEnabled(True)
         self.choice.setEnabled(True)
         log.warning("%s firmware update failed: %s", self.name, e)
+
+    def _test(self):
+        self.btn_test.setEnabled(False)
+        self.btn_close.setEnabled(False)
+        self.status.setText(f"Connecting to {self.name} over Bluetooth…")
+        mac = self.docked.info.mac
+
+        def done(res):
+            self.btn_test.setEnabled(True)
+            self.btn_close.setEnabled(True)
+            if res.get("ok"):
+                self.status.setText(f"<span style='color:{GOOD}; font-weight:700'>✔ Connected:</span> "
+                                    f"{res['firmware']} · {res['kind']} · {res['rate_hz']:g} Hz"
+                                    + (f" · battery {res['battery_pct']:.0f}%" if res.get("battery_pct") is not None
+                                       else ""))
+            else:
+                self.status.setText(f"<span style='color:{CRITICAL}; font-weight:700'>✖ No connection:</span> "
+                                    f"{res.get('error')}. Did you switch it off and on? Try again in a few seconds.")
+
+        def failed(e):
+            done({"ok": False, "error": str(e)})
+
+        run_bg(lambda: probe_device(mac, self.name, self.cfg, attempts=4), done, failed, "firmware-test")
