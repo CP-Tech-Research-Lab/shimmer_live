@@ -6,7 +6,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QSizePolicy, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from .. import clocks
@@ -55,11 +55,15 @@ def sticky_range(cur, lo, hi, pad_frac=0.08):
 pg.setConfigOptions(antialias=True, background=SURFACE, foreground=MUTED)
 
 
+DEVICE_CARD_WIDTH = 340
+
+
 class DeviceCard(QFrame):
     def __init__(self, session: ShimmerSession, page):
         super().__init__()
         self.s, self.page = session, page
         self.setStyleSheet("DeviceCard { background: white; border: 1px solid #dcdcd8; border-radius: 6px; }")
+        self.setFixedWidth(DEVICE_CARD_WIDTH)          # cards wrap onto new rows instead of widening the window
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 8, 12, 8)
         sw = QLabel("●")
@@ -67,8 +71,8 @@ class DeviceCard(QFrame):
         lay.addWidget(sw)
         col = QVBoxLayout()
         col.setSpacing(0)
-        self.title = QLabel(f"<span style='font-size:{FONT_M}pt; font-weight:700'>{session.name}</span> "
-                            f"<span style='color:{MUTED}; font-size:{FONT_S}pt'>{session.mac}</span>")
+        self.title = QLabel(f"<span style='font-size:{FONT_M}pt; font-weight:700'>{session.name}</span>")
+        self.setToolTip(f"{session.name}\nBluetooth address {session.mac}")
         self.line = QLabel()
         self.line2 = QLabel()
         self.line2.setStyleSheet(f"color: {MUTED}; font-size: {FONT_S}pt;")
@@ -76,6 +80,7 @@ class DeviceCard(QFrame):
         self.line3.setStyleSheet(f"color: {MUTED}; font-size: {FONT_S}pt;")
         for w in (self.title, self.line, self.line2, self.line3):
             col.addWidget(w)
+        self.line3.setVisible(False)
         lay.addLayout(col)
         gear = QPushButton("⚙")
         gear.setToolTip("Device info")
@@ -85,17 +90,18 @@ class DeviceCard(QFrame):
         lay.addWidget(gear, 0, Qt.AlignTop)
 
     def refresh(self):
+        """Three short lines that each fit the card: state, sensors/firmware, plugins (details in tooltips)."""
         s = self.s
         st = s.state
         if st == State.STREAMING:
             ok = s.measured_rate >= LOW_RATE_FRACTION * s.rate or s.seconds_in_state() < 5
-            state = (f"<span style='color:{GOOD if ok else WARNING}; font-weight:600'>● streaming</span> "
-                     f"{s.measured_rate:.0f}/{s.rate:.0f} Hz")
+            rate = f"{s.rate:.0f} Hz" if ok else f"{s.measured_rate:.0f} of {s.rate:.0f} Hz"
+            state = f"<span style='color:{GOOD if ok else WARNING}; font-weight:600'>● streaming</span> {rate}"
         elif st == State.LOST:
             state = (f"<span style='color:{CRITICAL}; font-weight:700'>● LOST {fmt_duration(s.seconds_in_state())}"
-                     f"</span> reconnecting (attempt {s.attempt})")
+                     f"</span> · retrying")
         elif st == State.CONNECTING:
-            state = f"<span style='color:#1f4e8c; font-weight:600'>● connecting</span> {s.detail}"
+            state = "<span style='color:#1f4e8c; font-weight:600'>● connecting…</span>"
         elif st == State.FAILED:
             state = f"<span style='color:{CRITICAL}; font-weight:700'>● not connected</span>"
         else:
@@ -103,12 +109,18 @@ class DeviceCard(QFrame):
         batt = ""
         if s.battery_pct is not None:
             c = CRITICAL if s.battery_pct < BATTERY_CRIT else WARNING if s.battery_pct < BATTERY_WARN else INK
-            batt = f" · battery <span style='color:{c}; font-weight:600'>{s.battery_pct:.0f}%</span>"
+            batt = f" · <span style='color:{c}; font-weight:600'>{s.battery_pct:.0f}%</span>"
         set_if_changed(self.line, state + batt)
+        self.line.setToolTip(f"{st.value}: {s.detail}" + (f"\nbattery {s.battery_pct:.0f}%" if s.battery_pct
+                                                          is not None else ""))
         rec = s.recorder
-        recs = f" · recorded {rec.stats[s.mac].samples:,}" if rec and s.mac in rec.stats else ""
-        set_if_changed(self.line2, f"{s.kind or 'Shimmer3'} · {s.firmware or '—'} · {s.packets:,} samples{recs}")
-        set_if_changed(self.line3, self.page.plugin_status(s))
+        recs = f" · rec {rec.stats[s.mac].samples:,}" if rec and s.mac in rec.stats else ""
+        fw = (s.firmware or "").replace("LogAndStream ", "fw ")
+        set_if_changed(self.line2, f"{s.kind or 'Shimmer3'}" + (f" · {fw}" if fw else "") + recs)
+        self.line2.setToolTip(f"{s.firmware or ''}\n{s.packets:,} samples received")
+        plugins = self.page.plugin_status(s)
+        set_if_changed(self.line3, plugins)
+        self.line3.setVisible(bool(plugins))
 
 
 class SignalRow(QWidget):
@@ -177,23 +189,17 @@ class LivePage(QWidget):
 
         # ---- toolbar ----
         bar = QHBoxLayout()
-        self.btn_back = QPushButton("◀  Devices")
-        self.btn_back.setToolTip("Stop streaming, disconnect and go back to the device list")
+        self.btn_back = QPushButton("←  Back to Shimmers")
+        self.btn_back.setToolTip("Stop streaming, disconnect all Shimmers and go back to the list of Shimmers")
         self.btn_back.clicked.connect(self._on_back)
         bar.addWidget(self.btn_back)
         bar.addSpacing(6)
         bar.addWidget(BrandHeader("Live data", compact=True))
         bar.addSpacing(16)
-        self.btn_panel = set_role(QPushButton("Signals ◂"), "small")
-        self.btn_panel.setCheckable(True)
-        self.btn_panel.setChecked(True)
-        self.btn_panel.setToolTip("Show/hide the signals panel (eye = show, dot = record)")
-        self.btn_panel.toggled.connect(self._toggle_panel)
-        bar.addWidget(self.btn_panel)
         self.win_combo = QComboBox()
         self.win_combo.setToolTip("How many seconds of signal the plots show")
         for sec in (5, 10, 20, 30, 60):
-            self.win_combo.addItem(f"{sec} s window", sec)
+            self.win_combo.addItem(f"Show last {sec} s", sec)
         self.win_combo.setCurrentIndex(1)
         self.win_combo.currentIndexChanged.connect(lambda _: setattr(self, "window_s",
                                                                      float(self.win_combo.currentData())))
@@ -242,9 +248,9 @@ class LivePage(QWidget):
         self._shortcuts = []
 
         # ---- device cards ----
-        self.cards_row = QHBoxLayout()
-        self.cards_row.setSpacing(8)
-        root.addLayout(self.cards_row)
+        cards_holder = QWidget()
+        self.cards_row = FlowLayout(cards_holder, spacing=8)       # wraps: never wider than the window
+        root.addWidget(cards_holder)
         self.cards = []
 
         # ---- big recording-loss panel ----
@@ -281,10 +287,22 @@ class LivePage(QWidget):
         left_lay = QVBoxLayout(self.left)
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(10)
-        sig_card = Card("Signals", "Eye: show in the plots · Dot: record. The dots lock while recording.")
+        sig_card = Card("Signals", "Eye: show · Dot: record")
+        self.btn_panel = set_role(QPushButton("‹ Hide"), "small")
+        self.btn_panel.setToolTip("Hide this panel to give the plots the full width")
+        self.btn_panel.clicked.connect(lambda: self._toggle_panel(False))
+        sig_card.actions.addWidget(self.btn_panel, 0, Qt.AlignTop)
         sig_card.body.addWidget(self.panel_scroll, 1)
         left_lay.addWidget(sig_card, 1)
         body.addWidget(self.left)
+        self.btn_show_panel = QPushButton("›\n\nS\ni\ng\nn\na\nl\ns")
+        self.btn_show_panel.setToolTip("Show the Signals panel (choose what to show and record)")
+        self.btn_show_panel.setFixedWidth(30)
+        self.btn_show_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.btn_show_panel.setStyleSheet(f"QPushButton {{ font-size: {FONT_S}pt; font-weight: 700; padding: 6px 0; }}")
+        self.btn_show_panel.clicked.connect(lambda: self._toggle_panel(True))
+        self.btn_show_panel.setVisible(False)
+        body.addWidget(self.btn_show_panel)
         plots_col = QVBoxLayout()
         self.glw = pg.GraphicsLayoutWidget()
         self.scroll = QScrollArea()
@@ -312,7 +330,6 @@ class LivePage(QWidget):
         self.cards = [DeviceCard(s, self) for s in self.sessions]
         for c in self.cards:
             self.cards_row.addWidget(c)
-        self.cards_row.addStretch(1)
         self._built_for = self._panel_for = None
         self._bound = set()
         self._lost_seen.clear()
@@ -422,7 +439,7 @@ class LivePage(QWidget):
 
     def _toggle_panel(self, on):
         self.left.setVisible(on)
-        self.btn_panel.setText("Signals ◂" if on else "Signals ▸")
+        self.btn_show_panel.setVisible(not on)
 
     def _rebuild_panel(self):
         key = tuple((s.mac, s.specs is not None, tuple(b.cls.id for b in self._bindings(s))) for s in self.sessions)
@@ -432,6 +449,7 @@ class LivePage(QWidget):
         while self.panel_lay.count():
             it = self.panel_lay.takeAt(0)
             if it.widget():
+                it.widget().hide()
                 it.widget().deleteLater()
         self.rows = {}
         for s in self.sessions:
@@ -640,7 +658,7 @@ class LivePage(QWidget):
                     val = f" {b.last[first.key]:.0f} {first.unit}" if first and first.key in b.last else ""
                     parts.append(f"<span style='color:{GOOD}'>{entry.cls.name} ✔</span>{val}")
             elif (entry.cls.id, s.mac) in self.host.unmatched:
-                parts.append(f"{entry.cls.name}: n/a ({self.host.unmatched[(entry.cls.id, s.mac)]})")
+                parts.append(f"<span title='{self.host.unmatched[(entry.cls.id, s.mac)]}'>{entry.cls.name}: n/a</span>")
         return "Plugins: " + " · ".join(parts) if parts else ""
 
     def _update_status(self):
@@ -684,8 +702,6 @@ class LivePage(QWidget):
                     " Check it is on (blue LED blinking), close by and not connected elsewhere."
                 a[f"failed-{k}"] = ("critical", f"{s.name}: could not connect — {s.detail}.{hint}",
                                     ("Retry", s.retry, "Try to connect to this Shimmer again"))
-            elif s.state == State.CONNECTING:
-                a[f"conn-{k}"] = ("info", f"Connecting to {s.name}… {s.detail}", None)
             if s.state == State.STREAMING and getattr(s, "ppg_docked", False):
                 a[f"ppgdock-{k}"] = ("warning", f"{s.name} is in the base: its PPG probe gets no power there "
                                                 f"(green LED off, PPG reads 0). Take it out of the base to use PPG.", None)
@@ -755,6 +771,8 @@ class LivePage(QWidget):
         recording = self.recorder is not None
         can = any(s.specs for s in self.sessions)
         self.btn_rec.setEnabled(not recording and can)
+        self.btn_rec.setVisible(not recording)
+        self.btn_stop.setVisible(recording)          # one button that changes state, not two side by side
         self.btn_stop.setEnabled(recording)
         self.btn_folder.setEnabled(not recording)
         self.btn_folder.setToolTip(f"Recordings are saved in {self.cfg.recordings_dir}")

@@ -100,7 +100,7 @@ def check_status(chk: dict | None) -> tuple[str, str]:
     if chk.get("ok") and chk.get("channels") == []:
         return "⚠ no sensors enabled: turn some on in ⚙ Settings", WARNING
     if chk.get("ok"):
-        return f"✔ tested {when}", GOOD
+        return f"✔ {when}", GOOD
     return f"✖ {chk.get('error', 'failed')} · tested {when}", CRITICAL
 
 
@@ -224,8 +224,9 @@ class DevicesPage(QWidget):
                                  "(hover a version for details)",
                                  "Sensors switched on (at the last test; hover for the channels)",
                                  "Sampling rate (at the last test)", "Battery (at the last test)",
-                                 "Last test, or setup progress. Grey rows: not in a base and not reached in the last "
-                                 "10 minutes", "Device settings")):
+                                 "✔ time of the last successful test (hover for details), or setup progress / "
+                                 "problems. Grey rows: not in a base and not reached in the last 10 minutes",
+                                 "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.itemChanged.connect(self._on_check_changed)
         self.table.itemSelectionChanged.connect(self._update_buttons)
@@ -402,8 +403,7 @@ class DevicesPage(QWidget):
         if r.docked_error:
             return "could not read it over USB: push it back into the slot", CRITICAL
         if r.slot and not r.can_stream:
-            return f"⚠ {r.firmware} firmware: cannot stream over Bluetooth (install LogAndStream with Consensys)", \
-                CRITICAL
+            return "⚠ can't stream (SDLog firmware: update it with 'Update firmware…')", CRITICAL
         if not r.paired:
             return "not paired yet: tick it, then press 'Set up docked Shimmers'", MUTED
         return check_status(self.cfg.device(r.mac).get("last_check"))

@@ -78,7 +78,7 @@ def test_docked_and_paired_shimmer_appears_once(page):
     c = cells(page)
     assert list(c) == ["Shimmer3-8684", "Shimmer3-FD15"]
     assert c["Shimmer3-8684"][:2] == ("base slot 1", "paired")
-    assert "cannot stream" in c["Shimmer3-FD15"][2]
+    assert "can't stream" in c["Shimmer3-FD15"][2]
 
 
 def test_setup_runs_only_on_ticked_docked_shimmers(page, monkeypatch):
@@ -176,7 +176,7 @@ def test_old_pairings_are_grey_and_battery_has_its_own_column(page):
     assert page.table.item(old, 1).foreground().color().name() == IDLE_GREY          # old pairing: grey
     assert page.table.item(docked, 1).foreground().color().name() != IDLE_GREY       # in the base: normal
     assert page.table.item(old, 7).text() == "15%" and page.table.item(old, 6).text() == "250 Hz"
-    assert page.table.item(old, 8).text().startswith("✔ tested")                       # no longer one long line
+    assert page.table.item(old, 8).text().startswith("✔ ")                             # no longer one long line
 
 
 def test_updated_shimmer_shows_the_restart_reminder_until_it_answers(page):

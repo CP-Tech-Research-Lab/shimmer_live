@@ -97,7 +97,7 @@ class SdPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
         head = QHBoxLayout()
-        self.btn_back = QPushButton("◀  Devices")
+        self.btn_back = QPushButton("←  Back to Shimmers")
         self.btn_back.setToolTip(TIPS["back"])
         self.btn_back.clicked.connect(self.back.emit)
         head.addWidget(self.btn_back, 0, Qt.AlignVCenter)
@@ -143,7 +143,7 @@ class SdPage(QWidget):
             "Shimmer clock minus PC clock, measured over Bluetooth (best of several round trips). The offsets "
             "at start and stop are removed from the data at import.")
         card.body.addWidget(self.table, 1)
-        root.addWidget(card, 3)
+        root.addWidget(card, 1)
 
         # ---- keypoints ----
         kcard = Card("Keypoints", "Press a button (or its number key 1–9) to mark this moment. Saved at once "
@@ -154,7 +154,7 @@ class SdPage(QWidget):
         self.kp_list.setToolTip("Keypoints marked in this session")
         self.kp_list.setMaximumHeight(140)
         kcard.body.addWidget(self.kp_list)
-        root.addWidget(kcard, 2)
+        root.addWidget(kcard, 0)
 
         self.timer = QTimer(self, interval=1000, timeout=self._render)
 

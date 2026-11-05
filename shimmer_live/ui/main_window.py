@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         for page in (self.devices, self.live, self.plugins, self.sd):
             self.stack.addWidget(page)
         self.setCentralWidget(self.stack)
+        self.stack.currentChanged.connect(lambda _: QTimer.singleShot(0, self._keep_on_screen))
         self.devices.show_live.connect(self._open_live)
         self.devices.show_plugins.connect(lambda: self.stack.setCurrentWidget(self.plugins))
         self.plugins.back.connect(lambda: self.stack.setCurrentWidget(self.devices))
@@ -50,6 +51,18 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(500, self._recover_unsaved)
         full = QShortcut(QKeySequence(Qt.Key_F11), self)
         full.activated.connect(lambda: self.showMaximized() if self.isFullScreen() else self.showFullScreen())
+
+    def _keep_on_screen(self):
+        """Never let a page push the window past the screen edge (the close button must stay visible)."""
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen is None or self.isFullScreen():
+            return
+        if self.width() > screen.width() or self.height() > screen.height():
+            if self.isMaximized():
+                self.showNormal()
+                self.showMaximized()
+            else:
+                self.resize(min(self.width(), screen.width()), min(self.height(), screen.height()))
 
     def _recover_unsaved(self):
         """Offer to save recordings left unsaved because the app closed while recording."""
