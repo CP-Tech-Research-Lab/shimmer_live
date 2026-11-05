@@ -71,6 +71,12 @@ class BluetoothBackend:
     def forget(self, device: BtDevice) -> None:
         raise NotImplementedError
 
+    def nearby(self, addresses, seconds: float, should_stop=lambda: False):
+        """Which of these (paired) devices answer a Bluetooth inquiry right now: {address: rssi or None}.
+
+        Stops early when all were seen or should_stop() becomes true. None: not supported here."""
+        return None
+
     def find(self, addresses, timeout: float = 20.0) -> dict:
         """Locate specific devices by address (e.g. read from a dock): {address: BtDevice}.
 

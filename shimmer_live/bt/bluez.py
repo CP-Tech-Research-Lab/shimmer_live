@@ -224,6 +224,38 @@ class BluezBackend(BluetoothBackend):
                 pass
         return list(seen.values())
 
+    def nearby(self, addresses, seconds, should_stop=lambda: False):
+        return self._run(self._nearby({a.upper() for a in addresses}, seconds, should_stop), seconds + 15)
+
+    async def _nearby(self, want, seconds, should_stop):
+        # BlueZ sets a device's RSSI only while a discovery is running and it answered the inquiry
+        # (cleared when discovery stops), also for paired devices: that is "switched on and in range".
+        try:
+            await self._call(self.adapter, ADAPTER, "SetDiscoveryFilter", "a{sv}",
+                             [{"Transport": Variant("s", "bredr")}])
+        except BluezError:
+            pass
+        try:
+            await self._call(self.adapter, ADAPTER, "StartDiscovery")
+        except BluezError as e:
+            if "InProgress" not in e.name:
+                raise
+        seen = {}
+        loop = asyncio.get_running_loop()
+        end = loop.time() + seconds
+        try:
+            while loop.time() < end and want - set(seen) and not should_stop():
+                for d in await self._devices():
+                    if d.address in want and (d.rssi is not None or d.connected):
+                        seen[d.address] = d.rssi
+                await asyncio.sleep(0.5)
+        finally:
+            try:
+                await self._call(self.adapter, ADAPTER, "StopDiscovery")
+            except BluezError:
+                pass
+        return seen
+
     def find(self, addresses, timeout=20.0):
         """Targeted scan: stop as soon as every requested address has been seen."""
         return self._run(self._find({a.upper() for a in addresses}, timeout), timeout + 15)

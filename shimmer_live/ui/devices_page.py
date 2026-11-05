@@ -34,8 +34,10 @@ ROW_H = 40
 BLUE = "#1f4e8c"
 COLS = ["Use", "Shimmer", "Where", "Bluetooth", "Firmware", "Sensors", "Rate", "Battery", "Status", ""]
 C_STATUS, C_GEAR = 8, 9
-IDLE_GREY = "#a6a6a2"         # not docked and not reached recently: probably an old pairing
-RECENT_S = 600
+IDLE_GREY = "#a6a6a2"         # not docked and not found nearby: switched off, far away or an old pairing
+PRESENCE_SCAN_S = 10          # each background search for paired Shimmers that are not docked...
+PRESENCE_PAUSE_MS = 5000      # ...then a pause, so Bluetooth is free most of the time
+PRESENT_S = 45                # found less than this long ago: counts as nearby (one missed search is normal)
 TIPS = {
     "refresh": "Read again which Shimmers are paired with this computer and, if a base is connected, which are "
                "docked in it.",
@@ -158,6 +160,15 @@ class DevicesPage(QWidget):
         self._sd_macs = set()
         self.needs_restart = set()      # firmware just updated: must be switched off and on           # Shimmers recording on their SD card (sdlog session)
         self.live_blocked = False
+        # Background search for paired Shimmers that are not docked: only those found nearby (or docked)
+        # can be ticked for live data or SD recording.
+        self.presence = backend is not None   # False: the backend cannot tell, every pairing stays usable
+        self.nearby = {}                       # mac -> (time.monotonic() when found, rssi or None)
+        self.presence_rounds = 0               # searches completed while this page was shown
+        self._presence_running = False
+        self._shown = False
+        self._manual_scan = False
+        self._presence_timer = QTimer(self, singleShot=True, timeout=self._presence_scan)
         self.base = BaseWatcher(cfg, backend, self._ask_pin)
         self.base.changed.connect(self._render_all)
         self.base.setup_finished.connect(lambda _: self.refresh())
@@ -203,8 +214,9 @@ class DevicesPage(QWidget):
                                             f"Previously used Shimmers can still be streamed."))
 
         # ---- the Shimmers ----
-        card = Card("Your Shimmers", "Tick the ones to stream. Shimmers in the base show their slot; "
-                                     "the ones not yet paired can be set up from the base with one click.")
+        card = Card("Your Shimmers", "Shimmers in the base, or switched on nearby (found automatically), can be "
+                                     "ticked; grey ones are not reachable now. Not paired yet: set them up from "
+                                     "the base with one click.")
         self.btn_refresh = _button("Refresh", TIPS["refresh"], "small")
         self.btn_refresh.clicked.connect(self._refresh_all)
         card.actions.addWidget(self.btn_refresh, 0, Qt.AlignTop)
@@ -219,13 +231,14 @@ class DevicesPage(QWidget):
         for i, mode in enumerate((QHeaderView.ResizeToContents,) * C_STATUS + (QHeaderView.Stretch, QHeaderView.ResizeToContents)):
             hh.setSectionResizeMode(i, mode)
         for i, tip in enumerate(("Tick to stream this Shimmer in live view", "Bluetooth name (hover for its address)",
-                                 "Base slot, if the Shimmer is docked", "Whether this computer is paired with it",
+                                 "Base slot if the Shimmer is docked; otherwise whether it was found switched on "
+                                 "nearby (searched every few seconds)", "Whether this computer is paired with it",
                                  "LogAndStream version. ⬆ old: update recommended · ↑ a newer version exists "
                                  "(hover a version for details)",
                                  "Sensors switched on (at the last test; hover for the channels)",
                                  "Sampling rate (at the last test)", "Battery (at the last test)",
                                  "✔ time of the last successful test (hover for details), or setup progress / "
-                                 "problems. Grey rows: not in a base and not reached in the last 10 minutes",
+                                 "problems. Grey rows: not in a base and not found nearby (switched off or out of range)",
                                  "Device settings")):
             hh.model().setHeaderData(i, Qt.Horizontal, tip, Qt.ToolTipRole)
         self.table.itemChanged.connect(self._on_check_changed)
@@ -408,12 +421,73 @@ class DevicesPage(QWidget):
             return "not paired yet: tick it, then press 'Set up docked Shimmers'", MUTED
         return check_status(self.cfg.device(r.mac).get("last_check"))
 
+    def _present(self, r: Row) -> bool:
+        """Docked, or found switched on nearby by the background search (or a successful test) just now."""
+        if r.slot or not self.presence:
+            return True
+        seen = self.nearby.get(r.mac)
+        return seen is not None and time.monotonic() - seen[0] < PRESENT_S
+
     def _is_idle(self, r: Row) -> bool:
-        """Not in a base, not in use and not reached in the last 10 minutes: shown in grey."""
+        """Not in a base, not in use and not found nearby: shown in grey, cannot be ticked."""
         if r.slot or not r.mac or r.mac in self.busy or r.mac in self._sd_macs:
             return False
-        chk = self.cfg.device(r.mac).get("last_check") or {}
-        return not (chk.get("ok") and seconds_since(chk.get("when", "")) < RECENT_S)
+        return not self._present(r)
+
+    # ---------------- background search for Shimmers nearby ----------------
+    def _presence_should_stop(self) -> bool:
+        """Bluetooth is needed for something else (a test, pairing, setup, a manual scan) or the page is hidden."""
+        return not self._shown or bool(self.busy) or self.base.setting_up or self._manual_scan
+
+    def _presence_next(self, ms=PRESENCE_PAUSE_MS):
+        if self._shown and self.presence:
+            self._presence_timer.start(ms)
+
+    def _presence_scan(self):
+        if self._presence_running or not self.presence:
+            return
+        want = [r.mac for r in self.rows if r.paired and not r.slot and r.mac]
+        if not want or self._presence_should_stop():
+            self._presence_next(2000)
+            return
+        self._presence_running = True
+        stop = self._presence_should_stop
+
+        def work():
+            seen = self.backend.nearby(want, PRESENCE_SCAN_S, stop)
+            return seen, stop()
+
+        def done(res):
+            seen, interrupted = res
+            self._presence_running = False
+            if seen is None:                               # this computer cannot tell: keep every pairing usable
+                log.info("searching for Shimmers nearby is not supported here")
+                self.presence = False
+                self._render_table()
+                return
+            now = time.monotonic()
+            for mac, rssi in seen.items():
+                if mac not in self.nearby or not self._recently_seen(mac):
+                    log.info("%s found nearby%s", self._name_of(mac), f" ({rssi} dBm)" if rssi is not None else "")
+                self.nearby[mac] = (now, rssi)
+            if not interrupted:
+                self.presence_rounds += 1
+            self._render_table()
+            self._presence_next()
+
+        def failed(e):
+            self._presence_running = False
+            log.info("search for Shimmers nearby failed: %s", e)
+            self._presence_next(PRESENCE_PAUSE_MS * 2)
+
+        run_bg(work, done, failed, "nearby")
+
+    def _recently_seen(self, mac) -> bool:
+        seen = self.nearby.get(mac)
+        return seen is not None and time.monotonic() - seen[0] < PRESENT_S
+
+    def _name_of(self, mac) -> str:
+        return next((r.name for r in self.rows if r.mac == mac), mac)
 
     def _render_all(self):
         has_base = bool(self.base.units)
@@ -445,7 +519,9 @@ class DevicesPage(QWidget):
         t.setRowCount(len(self.rows))
         for i, r in enumerate(self.rows):
             # paired: tick to stream it; docked but not paired yet: tick to include it in the setup
-            usable = bool(r.mac) and r.can_stream and (r.paired or bool(r.slot)) and r.mac not in self._sd_macs
+            present = self._present(r)
+            usable = (bool(r.mac) and r.can_stream and (r.paired or bool(r.slot)) and r.mac not in self._sd_macs
+                      and present)
             chk = QTableWidgetItem()
             chk.setFlags((Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable) if usable
                          else Qt.ItemIsSelectable)
@@ -455,16 +531,21 @@ class DevicesPage(QWidget):
                                                                  "Shimmers')" if r.slot else "")
                            if r.paired else
                            "Tick to pair it with 'Set up docked Shimmers'" if usable else
-                           "Its firmware cannot stream" if r.mac else "Still reading it over USB")
+                           "Its firmware cannot stream" if r.mac and not r.can_stream else
+                           "Recording on its SD card" if r.mac in self._sd_macs else
+                           "Not found nearby: switch it on and bring it closer. It can be ticked as soon as the app "
+                           "finds it (it searches every few seconds), or after a successful Test connection."
+                           if r.mac and not present else "Still reading it over USB")
             t.setItem(i, 0, chk)
             name = QTableWidgetItem(r.name)
             name.setToolTip(f"{r.name}\nBluetooth address {r.mac}" + (f"\nfirmware {r.firmware}" if r.firmware else ""))
             t.setItem(i, 1, name)
             unknown = not r.slot and (self.base.state == "checking" or self.base.reading)
-            where = QTableWidgetItem(r.where if r.slot else "checking…" if unknown else "not docked")
-            where.setForeground(QColor("#1f1f1e" if r.slot else WARNING if unknown else MUTED))
-            if unknown:
-                where.setToolTip("Still reading the base: this Shimmer may be docked")
+            where = QTableWidgetItem(self._where_text(r, unknown))
+            searching = not r.slot and self.presence and not self._present(r) and self.presence_rounds == 0
+            where.setForeground(QColor("#1f1f1e" if r.slot else WARNING if unknown or searching
+                                       else GOOD if self.presence and self._present(r) else MUTED))
+            where.setToolTip(self._where_tip(r, unknown))
             t.setItem(i, 2, where)
             bt = QTableWidgetItem("paired" if r.paired else "not paired")
             bt.setForeground(QColor(GOOD if r.paired else MUTED))
@@ -499,8 +580,8 @@ class DevicesPage(QWidget):
                     it = t.item(i, c)
                     if it is not None:
                         it.setForeground(QColor(IDLE_GREY))
-                name.setToolTip(name.toolTip() + "\nNot in a base and not reached in the last 10 minutes "
-                                                 "(switched off or far away?)")
+                name.setToolTip(name.toolTip() + "\nNot in a base and not found nearby (switched off or out of "
+                                                 "range?): it cannot be used for live data or SD recording now")
             if r.paired:
                 gear = _button("⚙ Settings", TIPS["settings"], "small")
                 gear.setEnabled(r.mac not in self.busy and not self.base.setting_up and r.mac not in self._sd_macs)
@@ -511,6 +592,32 @@ class DevicesPage(QWidget):
                 t.setItem(i, C_GEAR, QTableWidgetItem(""))
         t.blockSignals(False)
         self._update_buttons()
+
+    def _where_text(self, r: Row, unknown: bool) -> str:
+        if r.slot:
+            return r.where
+        if unknown:
+            return "checking…"
+        if not self.presence:
+            return "not docked"
+        if self._present(r):
+            return "nearby"
+        return "searching…" if self.presence_rounds == 0 else "not found"
+
+    def _where_tip(self, r: Row, unknown: bool) -> str:
+        if r.slot:
+            return "In the base (read over USB)"
+        if unknown:
+            return "Still reading the base: this Shimmer may be docked"
+        if not self.presence:
+            return "Not in a base"
+        seen = self.nearby.get(r.mac)
+        if self._present(r):
+            ago = time.monotonic() - seen[0]
+            return (f"Switched on and in range: found {ago:.0f} s ago"
+                    + (f" · signal {self._signal_text(seen[1])}" if seen[1] is not None else ""))
+        return ("Not in a base and not found switched on nearby. The app searches every few seconds while this "
+                "page is open; switch it on (blue blink every 2 s) and bring it closer.")
 
     def _render_found(self):
         known = {r.mac for r in self.rows}
@@ -561,7 +668,11 @@ class DevicesPage(QWidget):
 
     def _on_check_changed(self, item):
         if item.column() == 0:
-            self.cfg.data["selected"] = [r.mac for r in self._checked_rows()]
+            # ticks of rows that cannot be ticked right now (e.g. not found nearby) are kept for when they can
+            locked = {r.mac for i, r in enumerate(self.rows) if i < self.table.rowCount() and r.mac
+                      and self.table.item(i, 0) is not None and not self.table.item(i, 0).flags() & Qt.ItemIsEnabled}
+            kept = [m for m in self.cfg.data.get("selected", []) if m in locked]
+            self.cfg.data["selected"] = kept + [r.mac for r in self._checked_rows() if r.mac not in kept]
             self.cfg.save()
             self._update_buttons()
 
@@ -646,6 +757,9 @@ class DevicesPage(QWidget):
             self.busy.pop(mac, None)
             if res.get("ok"):
                 self.needs_restart.discard(mac)       # it answers over Bluetooth: the update is finished
+                self.nearby[mac] = (time.monotonic(), None)        # it answered: it is switched on and in range
+            else:
+                self.nearby.pop(mac, None)
             self._render_table()
             log.info("%s test: %s", name, describe_check(res)[0])
             if then:
@@ -689,6 +803,7 @@ class DevicesPage(QWidget):
                lambda e: QMessageBox.warning(self, "Forget pairing", f"Could not remove the pairing:\n{e}"))
 
     def _scan(self):
+        self._manual_scan = True                  # the background search pauses meanwhile
         self.btn_scan.setEnabled(False)
         self.scan_progress.setVisible(True)
         self.scan_label.setText("scanning… keep the Shimmer switched on and close by")
@@ -697,6 +812,7 @@ class DevicesPage(QWidget):
         self._render_found()
 
         def done(devs):
+            self._manual_scan = False
             self._set_found(devs)
             self.btn_scan.setEnabled(True)
             self.scan_progress.setVisible(False)
@@ -704,6 +820,7 @@ class DevicesPage(QWidget):
             self.scan_label.setText(f"found {n} Shimmer(s)" + ("" if n else " — not there? see the Guide tab"))
 
         def fail(e):
+            self._manual_scan = False
             self.btn_scan.setEnabled(True)
             self.scan_progress.setVisible(False)
             self.scan_label.setText(f"scan failed: {e}")
@@ -801,9 +918,17 @@ class DevicesPage(QWidget):
     def showEvent(self, ev):
         super().showEvent(ev)
         self.base.start()                    # watch USB for a base only while this page is visible
+        self._shown = True
+        self.presence_rounds = 0             # "searching…" again until the first search after coming back
+        self._presence_next(300)
 
     def hideEvent(self, ev):
         self.base.stop()
+        self._shown = False                  # a running search stops within half a second (live view needs the radio)
+        try:
+            self._presence_timer.stop()
+        except RuntimeError:
+            pass
         super().hideEvent(ev)
 
     def bt_limit(self) -> int:

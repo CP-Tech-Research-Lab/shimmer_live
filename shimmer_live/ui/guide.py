@@ -20,6 +20,20 @@ GUIDE_HTML = f"""
     logging-only firmware (SDLog) are flagged: they cannot stream over Bluetooth.</li>
 <li>Ready Shimmers are ticked in <b>Your Shimmers</b>: press <b>Show live data</b>.</li>
 </ol>
+
+<h3>Which Shimmers can be used</h3>
+<p>While this page is open the app keeps <b>searching for your paired Shimmers</b> that are not in a base
+(a short Bluetooth search every few seconds). The <b>Where</b> column says:</p>
+<ul>
+<li><b>base slot N</b>: in the base &mdash; usable.</li>
+<li><b style="color:#1b9e3e">nearby</b>: switched on and in range &mdash; usable (hover for the signal strength).</li>
+<li><b>searching…</b>: the first search is still running.</li>
+<li><b style="color:#a6a6a2">not found</b> (grey row): switched off, out of range, or connected to another program.
+    It <b>cannot be ticked</b> for <b>Show live data</b> or <b>Record on SD cards</b>. Switch it on
+    (blue blink every 2 s) and bring it closer: it turns bright on its own within a few seconds.
+    A successful <b>Test connection</b> (highlight the row) also makes it usable.</li>
+</ul>
+<p>Your ticks are remembered: a Shimmer you ticked earlier is ticked again as soon as it is found.</p>
 <p>If a paired Shimmer does not connect, setup keeps its pairing: a timeout can mean the radio is
 temporarily busy or unreachable. Retry <b>Test connection</b>. If you need to replace a pairing,
 use <b>Forget pairing</b>, then set it up again.</p>

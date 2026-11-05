@@ -19,7 +19,7 @@ log = logging.getLogger("shimmerlive.winrt")
 
 try:
     from winrt.windows.devices.bluetooth import BluetoothDevice
-    from winrt.windows.devices.enumeration import (DeviceInformation, DevicePairingKinds,
+    from winrt.windows.devices.enumeration import (DeviceInformation, DeviceInformationKind, DevicePairingKinds,
                                                    DevicePairingResultStatus)
 except ImportError as e:     # pragma: no cover - only on Windows
     raise BackendUnavailable(
@@ -28,6 +28,23 @@ except ImportError as e:     # pragma: no cover - only on Windows
 
 def _mac_from_int(a: int) -> str:
     return ":".join(f"{(a >> (8 * i)) & 0xFF:02X}" for i in reversed(range(6)))
+
+
+def _prop(props, key, unbox_name):
+    """A DeviceInformation property, unboxed (pywinrt 4 hands boxed IInspectable values)."""
+    try:
+        if not props.has_key(key):
+            return None
+        v = props.lookup(key)
+    except Exception:                                       # noqa: BLE001
+        return None
+    if v is None:
+        return None
+    try:
+        import winrt.system as wsys
+        return getattr(wsys, unbox_name)(v)
+    except Exception:                                       # noqa: BLE001 - already a plain value
+        return v
 
 
 async def _find_all(selector):
@@ -111,6 +128,29 @@ class WindowsBackend(BluetoothBackend):
         found = self._run(self._list(False), max(60, seconds + 45))
         on_update(found)
         return found
+
+    def nearby(self, addresses, seconds, should_stop=lambda: False):
+        """One inquiry over the Bluetooth (classic) association endpoints, paired ones included: Windows marks
+        the ones that answered as present."""
+        try:
+            return self._run(self._nearby({a.upper() for a in addresses}), max(60, seconds + 45))
+        except Exception as e:                              # noqa: BLE001 - presence is best effort
+            log.info("nearby search failed: %s", e)
+            return None
+
+    async def _nearby(self, want):
+        aqs = 'System.Devices.Aep.ProtocolId:="{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}"'
+        props = ["System.Devices.Aep.DeviceAddress", "System.Devices.Aep.IsPresent",
+                 "System.Devices.Aep.SignalStrength"]
+        infos = await DeviceInformation.find_all_async(aqs, props, DeviceInformationKind.ASSOCIATION_ENDPOINT)
+        seen = {}
+        for info in infos:
+            p = info.properties
+            addr = str(_prop(p, "System.Devices.Aep.DeviceAddress", "unbox_string") or "").upper()
+            if addr in want and _prop(p, "System.Devices.Aep.IsPresent", "unbox_boolean"):
+                rssi = _prop(p, "System.Devices.Aep.SignalStrength", "unbox_int32")
+                seen[addr] = int(rssi) if rssi is not None else None
+        return seen
 
     def find(self, addresses, timeout=20.0):
         """Open each device straight from its address: no inquiry scan needed on Windows."""

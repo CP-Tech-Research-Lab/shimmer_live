@@ -165,6 +165,7 @@ def test_firmware_button_needs_one_shimmer_in_the_base(page):
 
 def test_old_pairings_are_grey_and_battery_has_its_own_column(page):
     from shimmer_live.ui.devices_page import IDLE_GREY
+    page.presence = True                                  # searching nearby, nothing found
     page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True), BtDevice("40:84:32:56:A1:87", "Shimmer3-A187", True)]
     page.cfg.update_device("00:06:66:B9:86:84", name="Shimmer3-8684", last_check={
         "ok": True, "when": "2026-11-03T14:52:00Z", "kind": "ECG/ExG", "rate_hz": 250.1, "battery_pct": 15.0,
@@ -186,3 +187,60 @@ def test_updated_shimmer_shows_the_restart_reminder_until_it_answers(page):
     assert "switch it off and on" in cells(page)["Shimmer3-BCCE"][2]
     page.mark_restarted("D8:47:8F:04:BC:CE")
     assert "switch it off and on" not in cells(page)["Shimmer3-BCCE"][2]
+
+
+class FakeBackend:
+    def __init__(self, around):
+        self.around, self.asked = around, []
+
+    def nearby(self, addresses, seconds, should_stop=lambda: False):
+        self.asked.append(sorted(addresses))
+        return {a: -60 for a in addresses if a in self.around}
+
+
+def test_only_shimmers_found_nearby_or_docked_can_be_ticked(page, monkeypatch):
+    import shimmer_live.ui.devices_page as dpm
+    monkeypatch.setattr(dpm, "run_bg", lambda fn, done=None, failed=None, name=None: done(fn()))
+    near, far, docked = "40:84:32:56:A2:81", "00:06:66:B9:86:84", "40:84:32:56:A1:87"
+    page.backend, page.presence, page._shown = FakeBackend({near}), True, True
+    page.paired = [BtDevice(m, n, True) for m, n in ((near, "Shimmer3-A281"), (far, "Shimmer3-8684"),
+                                                       (docked, "Shimmer3-A187"))]
+    page.cfg.data["selected"] = [near, far, docked]
+    dock(page, [SlotInfo(5, True, docked, "LogAndStream 1.1.9", True)])
+    page._render_all()
+    assert cells(page)["Shimmer3-A281"][0] == "searching…"
+    assert page.checked_devices() == [(docked, "Shimmer3-A187")]       # nothing found yet: only the docked one
+    page._presence_scan()
+    assert page.backend.asked == [sorted([near, far])]                  # docked ones are not searched for
+    assert cells(page)["Shimmer3-A281"][0] == "nearby" and cells(page)["Shimmer3-8684"][0] == "not found"
+    assert sorted(m for m, _ in page.checked_devices()) == sorted([near, docked])
+    rows = {page.table.item(r, 1).text(): r for r in range(page.table.rowCount())}
+    from shimmer_live.ui.devices_page import IDLE_GREY
+    assert page.table.item(rows["Shimmer3-8684"], 1).foreground().color().name() == IDLE_GREY
+    assert page.table.item(rows["Shimmer3-A281"], 1).foreground().color().name() != IDLE_GREY
+    page.table.item(rows["Shimmer3-A281"], 0).setCheckState(dpm.Qt.Unchecked)   # untick one that is usable...
+    assert far in page.cfg.data["selected"] and near not in page.cfg.data["selected"]  # ...the grey tick is kept
+    page.backend.around = {far}                                       # switched on later: it becomes usable
+    page._presence_scan()
+    assert (far, "Shimmer3-8684") in page.checked_devices()
+
+
+def test_search_pauses_while_bluetooth_is_busy(page, monkeypatch):
+    import shimmer_live.ui.devices_page as dpm
+    monkeypatch.setattr(dpm, "run_bg", lambda fn, done=None, failed=None, name=None: done(fn()))
+    page.backend, page.presence, page._shown = FakeBackend(set()), True, True
+    page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]
+    page.base.state = "none"
+    page._render_all()
+    page.busy["00:06:66:B9:86:84"] = "testing…"
+    page._presence_scan()
+    assert page.backend.asked == []
+
+
+def test_without_presence_support_every_pairing_stays_usable(page):
+    page.paired = [BtDevice("00:06:66:B9:86:84", "Shimmer3-8684", True)]
+    page.cfg.data["selected"] = ["00:06:66:B9:86:84"]
+    page.base.state = "none"
+    page._render_all()                                                  # backend None in this fixture
+    assert page.checked_devices() == [("00:06:66:B9:86:84", "Shimmer3-8684")]
+    assert cells(page)["Shimmer3-8684"][0] == "not docked"
