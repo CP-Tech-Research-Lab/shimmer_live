@@ -59,6 +59,11 @@ For a Shimmer3 GSR+ optical pulse probe, select **PPG optical probe** in device 
    - While recording, a large flashing red panel shows *"LOST CONNECTION — device — hh:mm:ss and counting"*.
 6. **Recording.**
    - *Stop recording* opens the save dialog. It shows a summary per device (samples received vs. expected, connection losses, time lost) and the **quality checks**, and has a **name** field and a **notes** box. *Save* writes the ZIP.
+   - **View signals…** in the save dialog (after *Stop recording* and after an SD import) opens a viewer with every recorded signal on one time axis: time since the recording started, with all Shimmers on the same clock, so a late start lines up correctly.
+     - *Overview:* a strip with one bar per Shimmer showing where it has data, plus the keypoints. Click it to jump.
+     - *Window:* 5 s, 10 s, 30 s, 1 min (default), 5 min or 10 min, moved by one scrollbar for all signals. ◀ ▶, the arrow keys and Page Up/Down also move it.
+     - *What is drawn:* keypoints as coloured lines, gaps as breaks with shaded areas for gaps ≥ 0.5 s. Values are calibrated, and each y-axis fits what is visible.
+     - *Speed:* each redraw cuts out the visible window and reduces it to ~2 points per pixel (min/max, so spikes stay visible). With 2 h at 512 Hz (3.7 M samples per signal), the viewer opens in about 0.5 s and scrolls in 10–25 ms.
    - Closing the dialog never loses the recording. *Discard* deletes it after confirmation.
    - While recording, data goes to crash-safe working files. If the app closes during a recording, it offers to recover it at the next start.
    - Recordings go to `~/Documents/ShimmerRecordings`; change this with *Folder…*.

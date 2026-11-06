@@ -164,6 +164,7 @@ class SaveRecordingDialog(QDialog):
         super().__init__(parent)
         self.folder = folder
         self.analysis = None
+        self._viewer = None                # the "View signals" window, while open
         self.saved_path = None
         self._busy = True
         self.setWindowTitle("Recovered recording" if recovered else "Save recording")
@@ -232,6 +233,10 @@ class SaveRecordingDialog(QDialog):
         self.btn_folder.setToolTip("Open the folder where recordings are saved")
         self.btn_folder.clicked.connect(lambda: open_folder(self.folder.parent))
         btns.addWidget(self.btn_folder)
+        self.btn_view = QPushButton("View signals…")
+        self.btn_view.setToolTip("Look through every recorded signal on one time axis, with keypoints and gaps")
+        self.btn_view.clicked.connect(self._view)
+        btns.addWidget(self.btn_view)
         self.btn_save = set_role(QPushButton("Save recording"), "primary")
         self.btn_save.setToolTip("Write the recording as one .zip file (CSV per Shimmer, keypoints, quality checks, "
                                  "notes), named with its start time and the name above")
@@ -246,6 +251,19 @@ class SaveRecordingDialog(QDialog):
         self._busy = not on
         for b in (self.btn_save, self.btn_discard):
             b.setEnabled(on)
+        self.btn_view.setEnabled(on and self.analysis is not None)
+
+    def _view(self):
+        from .recording_view import RecordingView      # only loaded when used
+        try:
+            if self._viewer is not None and self._viewer.isVisible():
+                self._viewer.raise_()                  # already open: bring it to the front
+                self._viewer.activateWindow()
+                return
+        except (AttributeError, RuntimeError):         # never opened, or closed (deleted)
+            pass
+        self._viewer = RecordingView(self, self.analysis, self.folder.name.lstrip(".").removesuffix(".partial"))
+        self._viewer.show()
 
     def _analysis_failed(self, e):
         self._busy = False
