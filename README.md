@@ -22,8 +22,6 @@ Desktop app (Linux and Windows) to pair Shimmer3 sensors, view their data in rea
 | **Plugins (HRV, LSL)** | **Device settings and labels** |
 | ![Plugins page](docs/media/05_plugins.png) | ![Device settings](docs/media/07_device_settings.png) |
 
-*These pictures are made from the app itself with simulated Shimmers: `python tools/make_docs_media.py` makes them again (needs ffmpeg).*
-
 ## Tutorials
 
 ### 1. First time: set up Shimmers from a base

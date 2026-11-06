@@ -62,7 +62,9 @@ class Broken(AppOnly):
         raise RuntimeError("boom")
 
 
-def test_host_time_is_when_each_sample_arrived_and_label_is_passed(tmp_path, clock):
+def test_host_time_is_when_each_sample_arrived_and_label_is_passed(tmp_path, clock, monkeypatch):
+    # the fake clock counts nanoseconds on every clock; on Windows the shared clock's real tick is 0.1 us
+    monkeypatch.setattr(clocks, "SHARED_CLOCK_SECONDS_PER_CYCLE", 1e-9)
     s = make_session(tmp_path, GSR_CHANNELS, 32.0)
     s.label = "alberto"
     host = PluginHost([registry.PluginEntry(HostTimes, "test"), registry.PluginEntry(AppOnly, "test")])
