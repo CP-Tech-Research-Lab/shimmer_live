@@ -187,8 +187,6 @@ Raw values are integers exactly as the Shimmer sent them; nothing is lost. The l
 | Internal / external ADC (PPG on A13) | 12-bit ADC | mV = raw × 3000 / 4095, as Consensys. On a GSR+ unit A13 is named `PPG_A13_CAL`; others `Int_ADC_A<n>_CAL` / `Ext_ADC_A<n>_CAL` |
 | ECG/EMG status, accelerometer, gyroscope, magnetometer, other channels | as sent | not calibrated (Consensys converts the IMU with calibration values stored in each Shimmer; not done here yet) |
 
-**Checked against Consensys** (Shimmer3-A281 and an ECG unit, 5 trials exported by Consensys, November 2026). Every calibrated ECG, EDA and PPG value in those files converts back to an exact raw integer with these formulas, so values from this app and from Consensys are directly comparable. In *Calibrated* mode the columns are also named as in Consensys, including the derived `ECG_LL-LA_24BIT_CAL` and `GSR_Skin_Resistance_CAL` (kΩ). Consensys' own SD files start with about 0.2 s of start-up samples (EDA range 0/1, a constant 125 µS) and contain occasional single-sample EDA spikes where the GSR switches range on its own. Recordings made by this app use a fixed range and have neither.
-
 The formulas live in one place in the code, `shimmer_live/conversions.py` (`CALIBRATION_DOC` and `calibrate_array`). A test checks that converting a recorded raw column gives exactly the values the live view shows.
 
 The **quality checks** are heuristics with thresholds listed in `shimmer_live/qc.py`. They flag likely problems; they are not a clinical assessment:
