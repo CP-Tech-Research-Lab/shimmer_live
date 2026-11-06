@@ -154,6 +154,11 @@ def analyze(folder) -> Analysis:
         if not raw_mode and {"ECG_LL-RA_24BIT_CAL", "ECG_LA-RA_24BIT_CAL"} <= names:   # derived lead, as Consensys
             cols["ECG_LL-LA_24BIT_CAL"] = cols["ECG_LL-RA_24BIT_CAL"] - cols["ECG_LA-RA_24BIT_CAL"]
             units.append("mV")
+        if not raw_mode and "GSR_Skin_Conductance_CAL" in names:                       # as Consensys
+            with np.errstate(divide="ignore", invalid="ignore"):
+                cond = np.asarray(cols["GSR_Skin_Conductance_CAL"], dtype=float)
+                cols["GSR_Skin_Resistance_CAL"] = np.where(cond > 0, 1000.0 / cond, np.nan)
+            units.append("kOhms")
         marks = np.full(len(unix_ms), "", dtype=object)
         for ev in kp_events:
             if len(unix_ms):

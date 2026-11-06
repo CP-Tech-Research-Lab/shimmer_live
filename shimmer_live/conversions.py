@@ -27,6 +27,25 @@ def vbatt_raw_to_mv(raw: int) -> float:
     return raw * 3000.0 / 4095.0 * 1.988
 
 
+ADC_MV_PER_COUNT = 3000.0 / 4095.0     # Shimmer3 12-bit ADCs, 3.0 V reference (Consensys: offset 0, gain 1)
+
+
+def adc_raw_to_mv(raw: int) -> float:
+    return raw * ADC_MV_PER_COUNT
+
+
+# Internal / external ADC channels: (pin, Consensys-style name stem).
+ADC_CHANNELS = {
+    EChannelType.INTERNAL_ADC_1: ("A1", "Int_ADC_A1"),
+    EChannelType.INTERNAL_ADC_12: ("A12", "Int_ADC_A12"),
+    EChannelType.INTERNAL_ADC_13: ("A13", "Int_ADC_A13"),
+    EChannelType.INTERNAL_ADC_14: ("A14", "Int_ADC_A14"),
+    EChannelType.EXTERNAL_ADC_7: ("A7", "Ext_ADC_A7"),
+    EChannelType.EXTERNAL_ADC_6: ("A6", "Ext_ADC_A6"),
+    EChannelType.EXTERNAL_ADC_15: ("A15", "Ext_ADC_A15"),
+}
+
+
 def battery_percent(mv: float) -> float:
     return float(battery_voltage_to_percent(mv / 1000.0))
 
@@ -92,6 +111,13 @@ def build_specs(chans, exg_gains: dict) -> list[ChannelSpec]:
             specs.append(ChannelSpec(c, key, f"{label} (gain {gain})", "mV", exg_to_mv(gain), kind="exg", default_on=True,
                                      export_name=export, export_unit="mV",
                                      calibration={"formula": "exg", "gain": gain}))
+        elif c in ADC_CHANNELS:
+            pin, stem = ADC_CHANNELS[c]
+            # On a GSR+ board the A13 input is the optical pulse (PPG) connector: named as Consensys does.
+            ppg = c == EChannelType.INTERNAL_ADC_13 and EChannelType.GSR_RAW in chans
+            name = "PPG_A13" if ppg else stem
+            specs.append(ChannelSpec(c, c.name, "PPG (A13)" if ppg else f"ADC {pin}", "mV", adc_raw_to_mv,
+                                     export_name=f"{name}_CAL", export_unit="mV", calibration={"formula": "adc"}))
         elif c in STATUS_CHANNELS:
             n = 1 if c == EChannelType.EXG_ADS1292R_1_STATUS else 2
             specs.append(ChannelSpec(c, c.name.replace("EXG_ADS1292R_", "EXG"), f"ECG/EMG status {n}", None, None,
@@ -128,6 +154,8 @@ CALIBRATION_DOC = {
             "V = ADC x 3.0 / 4095; skin resistance (kOhm) = Rf / (V / 0.5 - 1); "
             "skin conductance (uS) = 1000 / resistance. V <= 0.5 V means no skin contact (written as empty)."),
     "vbatt": "Battery (12-bit ADC): mV = raw x 3000 / 4095 x 1.988 (on-board voltage divider).",
+    "adc": ("Internal / external ADC, e.g. the PPG on A13 (12-bit, 3.0 V reference): mV = raw x 3000 / 4095 "
+            "(as Consensys: offset 0, gain 1)."),
     None: "No calibration: the value is stored as sent by the device (e.g. ECG/EMG status bytes).",
 }
 
@@ -140,6 +168,8 @@ def calibrate_array(calibration: dict, raw: np.ndarray) -> np.ndarray:
         return raw * (EXG_VREF_MV / calibration["gain"] / EXG_FULL_SCALE)
     if formula == "vbatt":
         return raw * 3000.0 / 4095.0 * 1.988
+    if formula == "adc":
+        return raw * ADC_MV_PER_COUNT
     if formula == "gsr":
         r = np.nan_to_num(raw).astype(np.int64)
         rf = np.asarray(GSR_RF_KOHM)[(r >> 14) & 0x03]

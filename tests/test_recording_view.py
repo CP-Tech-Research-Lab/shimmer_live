@@ -66,6 +66,15 @@ def test_viewer_opens_on_a_real_recording_and_scrolls(tmp_path):
         x0, x1 = v.tracks[0].plot.viewRange()[0]
         assert (x0, x1) == pytest.approx((v.start_s, v.start_s + 5))
         assert "0:10" in v.position.text()
+        v.region.setRegion((20.0, 25.0))                  # what dragging the box in the overview does
+        v._redraw()
+        assert v.start_s == pytest.approx(20.0, abs=0.1) and v.time_bar.value() == 200
+        assert v.tracks[0].plot.viewRange()[0][0] == pytest.approx(20.0, abs=0.1)
+        assert not any(line.movable for line in v.region.lines)       # the box moves, its width does not
+        v.window_combo.setCurrentIndex(1)                 # 10 s: the box follows the new width
+        v._redraw()
+        lo, hi = v.region.getRegion()
+        assert hi - lo == pytest.approx(10.0)
     finally:
         from PySide6.QtCore import QCoreApplication, QEvent
         v.close()                                            # deletes itself (WA_DeleteOnClose)

@@ -5,7 +5,7 @@ from pyshimmer import EChannelType as E
 
 import numpy as np
 
-from shimmer_live.conversions import (CALIBRATION_DOC, EXG_FULL_SCALE, battery_percent, build_specs, calibrate_array,
+from shimmer_live.conversions import (CALIBRATION_DOC, adc_raw_to_mv, EXG_FULL_SCALE, battery_percent, build_specs, calibrate_array,
                                       device_kind, exg_saturated, exg_to_mv, gsr_raw_to_us, vbatt_raw_to_mv)
 
 
@@ -73,7 +73,8 @@ def test_vectorised_calibration_matches_live_conversion():
     np.testing.assert_allclose(calibrate_array({"formula": "exg", "gain": 6}, exg), [exg_to_mv(6)(int(r)) for r in exg])
     np.testing.assert_allclose(calibrate_array({"formula": "vbatt"}, [2800]), [vbatt_raw_to_mv(2800)])
     assert calibrate_array({}, [5])[0] == 5
-    assert set(CALIBRATION_DOC) == {"exg", "gsr", "vbatt", None}
+    assert set(CALIBRATION_DOC) == {"exg", "gsr", "vbatt", "adc", None}
+    np.testing.assert_allclose(calibrate_array({"formula": "adc"}, [1704]), [adc_raw_to_mv(1704)])
 
 
 def test_specs_carry_calibration_parameters():
@@ -88,3 +89,22 @@ def test_imu_channels_off_by_default():
     specs = build_specs([E.ACCEL_LN_X, E.GYRO_MPU9150_Y, E.MAG_LSM303DLHC_Z, E.GSR_RAW], {})
     assert {s.key: s.default_on for s in specs} == {"ACCEL_LN_X": False, "GYRO_MPU9150_Y": False,
                                                     "MAG_LSM303DLHC_Z": False, "GSR": True}
+
+
+def test_same_numbers_as_consensys():
+    """Values copied from a Consensys export of Shimmer3-A281 (GSR+ with PPG), 4 Nov 2026."""
+    assert adc_raw_to_mv(1704) == pytest.approx(1248.3516483516482, abs=1e-9)          # PPG_A13_CAL, mV
+    us = gsr_raw_to_us((2 << 14) | 2799)                                                # range 2, ADC 2799
+    assert us == pytest.approx(3.1010989010989007, abs=1e-12)                          # GSR_Skin_Conductance_CAL
+    assert 1000 / us == pytest.approx(322.46633593196316, abs=1e-9)                     # GSR_Skin_Resistance_CAL
+
+
+def test_adc_channels_are_mv_and_named_like_consensys():
+    gsr_plus = {s.key: s for s in build_specs([E.GSR_RAW, E.INTERNAL_ADC_13], {})}
+    ppg = gsr_plus["INTERNAL_ADC_13"]
+    assert (ppg.export_name, ppg.unit, ppg.label, ppg.calibration) == ("PPG_A13_CAL", "mV", "PPG (A13)",
+                                                                       {"formula": "adc"})
+    assert ppg.convert(4095) == pytest.approx(3000.0)
+    other = {s.key: s for s in build_specs([E.INTERNAL_ADC_13, E.EXTERNAL_ADC_7], {})}
+    assert other["INTERNAL_ADC_13"].export_name == "Int_ADC_A13_CAL"
+    assert other["EXTERNAL_ADC_7"].export_name == "Ext_ADC_A7_CAL"

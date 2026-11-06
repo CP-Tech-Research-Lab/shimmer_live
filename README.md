@@ -60,7 +60,7 @@ For a Shimmer3 GSR+ optical pulse probe, select **PPG optical probe** in device 
 6. **Recording.**
    - *Stop recording* opens the save dialog. It shows a summary per device (samples received vs. expected, connection losses, time lost) and the **quality checks**, and has a **name** field and a **notes** box. *Save* writes the ZIP.
    - **View signals…** in the save dialog (after *Stop recording* and after an SD import) opens a viewer with every recorded signal on one time axis: time since the recording started, with all Shimmers on the same clock, so a late start lines up correctly.
-     - *Overview:* a strip with one bar per Shimmer showing where it has data, plus the keypoints. Click it to jump.
+     - *Overview:* a strip with one bar per Shimmer showing where it has data, plus the keypoints. The shaded box is what's shown below: drag it like a slider, or click anywhere to jump.
      - *Window:* 5 s, 10 s, 30 s, 1 min (default), 5 min or 10 min, moved by one scrollbar for all signals. ◀ ▶, the arrow keys and Page Up/Down also move it.
      - *What is drawn:* keypoints as coloured lines, gaps as breaks with shaded areas for gaps ≥ 0.5 s. Values are calibrated, and each y-axis fits what is visible.
      - *Speed:* each redraw cuts out the visible window and reduces it to ~2 points per pixel (min/max, so spikes stay visible). With 2 h at 512 Hz (3.7 M samples per signal), the viewer opens in about 0.5 s and scrolls in 10–25 ms.
@@ -120,7 +120,10 @@ Raw values are integers exactly as the Shimmer sent them; nothing is lost. The l
 | ECG/ExG (ADS1292R) | 24-bit signed integer | mV = raw × (2420 / gain) / (2²³ − 1). 2420 mV is the chip reference; gain is 1, 2, 3, 4, 6, 8 or 12, read from the chip at connect. ±8388607 = saturated (lead off) |
 | GSR+ | 16-bit word: bits 15–14 = range, bits 11–0 = ADC | range selects Rf = 40.2 kΩ / 287 kΩ / 1 MΩ / 3.3 MΩ; V = ADC × 3.0 / 4095; R (kΩ) = Rf / (V / 0.5 − 1); conductance (µS) = 1000 / R. V ≤ 0.5 V means no skin contact (empty) |
 | Battery | 12-bit ADC | mV = raw × 3000 / 4095 × 1.988 |
-| ECG/EMG status, other channels | as sent | not calibrated |
+| Internal / external ADC (PPG on A13) | 12-bit ADC | mV = raw × 3000 / 4095, as Consensys. On a GSR+ unit A13 is named `PPG_A13_CAL`; others `Int_ADC_A<n>_CAL` / `Ext_ADC_A<n>_CAL` |
+| ECG/EMG status, accelerometer, gyroscope, magnetometer, other channels | as sent | not calibrated (Consensys converts the IMU with calibration values stored in each Shimmer; not done here yet) |
+
+**Checked against Consensys** (Shimmer3-A281 and an ECG unit, 5 trials exported by Consensys, November 2026). Every calibrated ECG, EDA and PPG value in those files converts back to an exact raw integer with these formulas, so values from this app and from Consensys are directly comparable. In *Calibrated* mode the columns are also named as in Consensys, including the derived `ECG_LL-LA_24BIT_CAL` and `GSR_Skin_Resistance_CAL` (kΩ). Consensys' own SD files start with about 0.2 s of start-up samples (EDA range 0/1, a constant 125 µS) and contain occasional single-sample EDA spikes where the GSR switches range on its own. Recordings made by this app use a fixed range and have neither.
 
 The formulas live in one place in the code, `shimmer_live/conversions.py` (`CALIBRATION_DOC` and `calibrate_array`). A test checks that converting a recorded raw column gives exactly the values the live view shows.
 

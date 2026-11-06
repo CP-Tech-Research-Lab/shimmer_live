@@ -162,6 +162,7 @@ class RecordingView(QDialog):
         self.duration = max([analysis.summary.get("duration_s", 0.0)] + ends)
         self.window_s = DEFAULT_WINDOW_S
         self.start_s = 0.0
+        self._setting_region = False
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 10, 12, 10)
@@ -200,7 +201,8 @@ class RecordingView(QDialog):
         self.overview.getAxis("left").setStyle(showValues=False)
         self.overview.getAxis("bottom").setTickFont(QFont(QApplication.font().family(), int(round(FONT_XS))))
         self.overview.setToolTip("The whole recording: one bar per Shimmer where it has data (breaks = gaps), "
-                                 "keypoints as lines. Click to jump; the shaded box is what is shown below.")
+                                 "keypoints as lines. The shaded box is what is shown below: drag it like a "
+                                 "slider, or click anywhere to jump there.")
         n_dev = max(1, len(self.coverage))
         for row, (name, color, span, gaps) in enumerate(self.coverage):
             yv = n_dev - row
@@ -223,8 +225,15 @@ class RecordingView(QDialog):
             self.overview.addItem(pg.InfiniteLine(pos=x, angle=90, pen=pg.mkPen(color, width=1)))
         self.overview.setXRange(0, max(self.duration, 1.0), padding=0.01)
         self.overview.setYRange(0.3, n_dev + 0.9, padding=0)
-        self.region = pg.LinearRegionItem(values=(0, self.window_s), movable=False,
-                                          brush=pg.mkBrush(31, 78, 140, 40), pen=pg.mkPen(31, 78, 140, 120))
+        # the shaded box = what is shown below: drag it (a slider), or click anywhere to jump
+        self.region = pg.LinearRegionItem(values=(0, self.window_s), movable=True,
+                                          brush=pg.mkBrush(31, 78, 140, 45), pen=pg.mkPen(31, 78, 140, 160),
+                                          hoverBrush=pg.mkBrush(31, 78, 140, 80))
+        for edge in self.region.lines:
+            edge.setMovable(False)                   # drag the whole box, never resize it (the menu sets its width)
+        self.region.setBounds((0, max(self.duration, self.window_s)))
+        self.region.setZValue(10)
+        self.region.sigRegionChanged.connect(self._region_moved)
         self.overview.addItem(self.region)
         self.overview.scene().sigMouseClicked.connect(self._overview_clicked)
         lay.addWidget(self.overview)
@@ -322,6 +331,13 @@ class RecordingView(QDialog):
     def _step(self, seconds):
         self.time_bar.setValue(int(round((self.start_s + seconds) / STEP_S_PER_TICK)))
 
+    def _region_moved(self):
+        """The box was dragged: move the window with it (redraws are coalesced while dragging)."""
+        if self._setting_region:
+            return
+        a = self.region.getRegion()[0]
+        self.time_bar.setValue(int(round(a / STEP_S_PER_TICK)))
+
     def _overview_clicked(self, ev):
         vb = self.overview.getPlotItem().vb
         x = vb.mapSceneToView(ev.scenePos()).x()
@@ -331,7 +347,11 @@ class RecordingView(QDialog):
         if not self.tracks and not self.isVisible():
             return
         a, b = self.start_s, self.start_s + self.window_s
-        self.region.setRegion((a, b))
+        lo, hi = self.region.getRegion()
+        if abs(lo - a) > STEP_S_PER_TICK / 2 or abs((hi - lo) - self.window_s) > 1e-6:
+            self._setting_region = True              # moving the box here must not count as a drag
+            self.region.setRegion((a, b))
+            self._setting_region = False
         for tr in self.tracks:
             if tr.plot is None:
                 continue
