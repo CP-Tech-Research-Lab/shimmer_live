@@ -10,9 +10,9 @@ from .common import CRITICAL, MUTED, set_role, style_table
 
 TCP_HELP = """<b>Mark keypoints from another program</b> (a stimulus script, a game, Unreal, …).<br>
 Open a TCP connection to this computer and send one line (ending with a newline):<br>
-&nbsp;• to a keypoint's port (in the table; by default <b>{b}+N</b> for keypoint N): anything, even an empty
-line, marks it<br>
-&nbsp;• to port <b>{b}</b>: the keypoint's name or number, e.g. <code>task start</code><br>
+&nbsp;• to a keypoint's own port (in the table): anything, even an empty line, marks that keypoint<br>
+&nbsp;• to the port for names or numbers (<b>{b}</b>): the keypoint's name or number, e.g. <code>task start</code>
+or <code>5</code> &mdash; one connection can then mark any keypoint<br>
 The time is taken the instant the line arrives. The app answers <code>OK &lt;name&gt; &lt;unix ns&gt;</code>,
 or <code>ERR &lt;reason&gt;</code> if nothing is recording. Works during a live recording and during an
 SD recording. One connection can send many lines.<br><br>
@@ -27,6 +27,8 @@ class KeypointsEditor(QWidget):
         super().__init__()
         self.cfg = cfg
         self.items = kpmod.load(cfg)
+        if kpmod.assign_ports(self.items, kp_server.settings(cfg)["base_port"]):
+            kpmod.save(cfg, self.items)          # every keypoint gets its own fixed port (once)
         lay = QVBoxLayout(self)
         intro = QLabel("Keypoints mark moments during a recording. In live view each one is a button "
                        "(and keys <b>1–9</b> for the first nine); a click draws a line on every plot and is saved "
@@ -62,21 +64,28 @@ class KeypointsEditor(QWidget):
         self.server = None                   # kp_server.KeypointServer, set by the main window
         st = kp_server.settings(cfg)
         tcp = QHBoxLayout()
-        self.tcp_on = QCheckBox("Other programs can mark (TCP), ports from")
+        self.tcp_on = QCheckBox("Accept keypoints from other programs (TCP)")
         self.tcp_on.setChecked(st["enabled"])
-        self.tcp_on.setToolTip("Another program marks a keypoint by sending a line to a TCP port: hover ⓘ")
-        self.tcp_port = QSpinBox()
-        self.tcp_port.setRange(1024, 65000)
-        self.tcp_port.setValue(st["base_port"])
-        self.tcp_port.setToolTip("First port: it takes keypoint names or numbers; keypoint N listens on this + N")
+        self.tcp_on.setToolTip("Another program marks a keypoint by sending a line to a TCP port: hover ⓘ how")
         info = set_role(QLabel("ⓘ how"), "muted")
-        info.setToolTip(TCP_HELP.format(b=st["base_port"], b1=st["base_port"] + 1))
         self.tcp_info = info
         tcp.addWidget(self.tcp_on)
-        tcp.addWidget(self.tcp_port)
         tcp.addWidget(info)
         tcp.addStretch(1)
         lay.addLayout(tcp)
+        names = QHBoxLayout()
+        self.tcp_port_label = QLabel("Port for names or numbers:")
+        self.tcp_port = QSpinBox()
+        self.tcp_port.setRange(1024, 65000)
+        self.tcp_port.setValue(st["base_port"])
+        tip = ("Send a keypoint's name or number to this port (e.g. 'task start' or '5'): one connection can mark "
+               "any keypoint. Each keypoint also has its own port, in the table.")
+        self.tcp_port.setToolTip(tip)
+        self.tcp_port_label.setToolTip(tip)
+        names.addWidget(self.tcp_port_label)
+        names.addWidget(self.tcp_port)
+        names.addStretch(1)
+        lay.addLayout(names)
         self.tcp_net = QCheckBox("Also from other computers on the network")
         self.tcp_net.setChecked(st["network"])
         self.tcp_net.setToolTip("Off: only programs on this computer can mark keypoints. On: any computer that "
@@ -97,7 +106,14 @@ class KeypointsEditor(QWidget):
         self.apply_tcp()
 
     def _tcp_changed(self, *_):
-        kp_server.save_settings(self.cfg, enabled=self.tcp_on.isChecked(), base_port=self.tcp_port.value(),
+        port = self.tcp_port.value()
+        taken = next((k.name for k in self.items if k.port == port), None)
+        if taken:
+            QMessageBox.information(self, "Port for names or numbers",
+                                    f"Port {port} is the port of '{taken}'. Choose another one.")
+            self.tcp_port.setValue(kp_server.settings(self.cfg)["base_port"])
+            return
+        kp_server.save_settings(self.cfg, enabled=self.tcp_on.isChecked(), base_port=port,
                                 network=self.tcp_net.isChecked())
         self.apply_tcp()
 
@@ -105,8 +121,9 @@ class KeypointsEditor(QWidget):
         """(Re)start the server for the current keypoint list and settings, and show what listens where."""
         st = kp_server.settings(self.cfg)
         b = st["base_port"]
-        self.tcp_info.setToolTip(TCP_HELP.format(b=b, b1=b + 1))
+        self.tcp_info.setToolTip(TCP_HELP.format(b=b, b1=self.port_of(0) if self.items else b + 1))
         self.tcp_port.setEnabled(st["enabled"])
+        self.tcp_port_label.setEnabled(st["enabled"])
         self.tcp_net.setEnabled(st["enabled"])
         if self.server is not None:
             if st["enabled"]:
@@ -121,9 +138,9 @@ class KeypointsEditor(QWidget):
             self.tcp_status.setText("")
             return
         text = (f"<span style='color:{MUTED}'>Listening "
-                f"({'this computer and the network' if st['network'] else 'this computer only'}) on port {b} "
-                f"(keypoint name or number) and on each keypoint's port in the table (click a port to change "
-                f"it).</span>")
+                f"({'this computer and the network' if st['network'] else 'this computer only'}) on each "
+                f"keypoint's port in the table (click one to change it) and on port {b} for names or "
+                f"numbers.</span>")
         if self.server.errors:
             bad = ", ".join(f"{p} ({why})" for p, why in sorted(self.server.errors.items()))
             text += (f"<br><span style='color:{CRITICAL}'>Not available: {bad}. Another program (or a second copy "
@@ -134,19 +151,17 @@ class KeypointsEditor(QWidget):
         return kpmod.tcp_ports(self.items, kp_server.settings(self.cfg)["base_port"])[i]
 
     def _set_port(self, i, text):
-        """A port typed in the table: empty = the default (first port + its number)."""
+        """A port typed in the table (empty or invalid: the old port stays)."""
         base = kp_server.settings(self.cfg)["base_port"]
         text = text.strip()
-        port = int(text) if text.isdigit() else None
-        if port == base + i + 1:
-            port = None                          # the default: keeps following the first port
-        if port == self.items[i].port:
+        port = int(text) if text.isdigit() and 1024 <= int(text) <= 65535 else None
+        if port is None or port == self.items[i].port:
+            self._render()
             return
-        new = port or base + i + 1
-        used = {p: f"'{self.items[j].name}'" for j, p in enumerate(kpmod.tcp_ports(self.items, base)) if j != i}
-        used[base] = "the first port (names and numbers)"
-        if new in used:
-            QMessageBox.information(self, "Keypoint port", f"Port {new} is already used by {used[new]}. "
+        used = {k.port: f"'{k.name}'" for j, k in enumerate(self.items) if j != i and k.port}
+        used[base] = "the port for names or numbers"
+        if port in used:
+            QMessageBox.information(self, "Keypoint port", f"Port {port} is already used by {used[port]}. "
                                                            "Choose another one.")
             self._render()
             return
@@ -190,13 +205,8 @@ class KeypointsEditor(QWidget):
             pl.setFixedWidth(76)
             pl.setEnabled(on)
             pl.setToolTip((f"Another program marks '{k.name}' by sending a line to TCP port {port}.\n"
-                           f"Type another port to change it (1024–65535); empty = the default "
-                           f"({kp_server.settings(self.cfg)['base_port'] + r + 1}).") if on
+                           f"Type another port to change it (1024–65535).") if on
                           else "Keypoints over TCP are off")
-            if k.port:
-                f = pl.font()
-                f.setBold(True)
-                pl.setFont(f)                        # changed from the default
             if on and self.server is not None and port in self.server.errors:
                 pl.setStyleSheet(f"color: {CRITICAL};")
                 pl.setToolTip(f"Port {port} is not available: {self.server.errors[port]}. Type another one.")
@@ -238,7 +248,8 @@ class KeypointsEditor(QWidget):
         if any(k.name == name for k in self.items):
             QMessageBox.information(self, "Keypoints", f"'{name}' already exists.")
             return
-        self.items.append(kpmod.Keypoint(name, kpmod.next_color(self.items), False))
+        self.items.append(kpmod.Keypoint(name, kpmod.next_color(self.items), False,
+                                         kpmod.next_free_port(self.items, kp_server.settings(self.cfg)["base_port"])))
         self.new_name.clear()
         self._save()
         self._render()

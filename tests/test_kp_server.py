@@ -128,16 +128,31 @@ def test_each_keypoint_port_can_be_changed_in_the_editor(tmp_path, monkeypatch):
     srv = kp_server.KeypointServer(lambda target, at: (got.append(target), "OK")[1])
     ed.attach_server(srv)
     try:
+        assert [k.port for k in kpmod.load(cfg)] == [base + n for n in range(1, 8)]   # fixed once, as before
         assert ed.table.cellWidget(0, 3).text() == str(base + 1)
         ed._set_port(4, str(other))                          # task start -> another port
         assert kpmod.load(cfg)[4].port == other and other in srv.targets and srv.targets[other] == 4
-        assert base + 5 not in srv.targets                   # its default port is free again
+        assert base + 5 not in srv.targets                   # its old port is free again
         assert ask(other, b"\n") == ["OK"] and got[-1] == 4
         ed._set_port(1, str(other))                          # already used: refused
-        assert told and "already used by 'task start'" in told[-1] and kpmod.load(cfg)[1].port is None
-        ed._set_port(2, str(base))                           # the first port: refused
-        assert "first port" in told[-1]
-        ed._set_port(4, "")                                  # empty: back to the default
-        assert kpmod.load(cfg)[4].port is None and srv.targets[base + 5] == 4
+        assert told and "already used by 'task start'" in told[-1] and kpmod.load(cfg)[1].port == base + 2
+        ed._set_port(2, str(base))                           # the port for names or numbers: refused
+        assert "names or numbers" in told[-1]
+        ed._set_port(4, "")                                  # empty: the port stays
+        assert kpmod.load(cfg)[4].port == other
+        # the port for names or numbers moves alone: the keypoints keep their ports
+        ed.tcp_port.setValue(base + 30)
+        ed._tcp_changed()
+        assert kp_server.settings(cfg)["base_port"] == base + 30 and kpmod.load(cfg)[0].port == base + 1
+        assert srv.targets[base + 30] is None and srv.targets[base + 1] == 0
+        ed.tcp_port.setValue(base + 1)                       # taken by 'rest start': refused, value restored
+        ed._tcp_changed()
+        assert "port of 'rest start'" in told[-1] and kp_server.settings(cfg)["base_port"] == base + 30
+        # a new keypoint gets the next free port; removing one never moves the others
+        ed.new_name.setText("stimulus on")
+        ed._add()
+        assert kpmod.load(cfg)[-1].port == base + 31
+        ed._remove(len(ed.items) - 1)
+        assert [k.port for k in kpmod.load(cfg)][:4] == [base + 1, base + 2, base + 3, base + 4]
     finally:
         srv.stop()

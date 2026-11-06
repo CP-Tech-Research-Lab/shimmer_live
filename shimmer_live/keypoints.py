@@ -16,7 +16,7 @@ class Keypoint:
     name: str
     color: str
     builtin: bool = False
-    port: int | None = None        # TCP port that marks it (None: the default, first port + its number)
+    port: int | None = None        # TCP port that marks it; given once (assign_ports), then fixed
 
 
 def load(cfg) -> list[Keypoint]:
@@ -27,8 +27,31 @@ def load(cfg) -> list[Keypoint]:
 
 
 def tcp_ports(keypoints: list[Keypoint], base_port: int) -> list[int]:
-    """The TCP port of each keypoint: its own if set, else base_port + its number (1, 2, ...)."""
+    """The TCP port of each keypoint (base_port + its number for one not assigned yet)."""
     return [k.port or base_port + i + 1 for i, k in enumerate(keypoints)]
+
+
+def assign_ports(keypoints: list[Keypoint], name_port: int) -> bool:
+    """Give every keypoint without a port its own fixed one: name_port + its number (as before, so existing
+    setups keep 4001, 4002, ...) or, if taken, the next free one. Returns True if any port was assigned."""
+    used = {k.port for k in keypoints if k.port} | {name_port}
+    changed = False
+    for i, k in enumerate(keypoints):
+        if not k.port:
+            p = name_port + i + 1
+            while p in used:
+                p += 1
+            k.port, changed = p, True
+            used.add(p)
+    return changed
+
+
+def next_free_port(keypoints: list[Keypoint], name_port: int) -> int:
+    used = {k.port for k in keypoints if k.port} | {name_port}
+    p = name_port + 1
+    while p in used:
+        p += 1
+    return p
 
 
 def save(cfg, keypoints: list[Keypoint]) -> None:

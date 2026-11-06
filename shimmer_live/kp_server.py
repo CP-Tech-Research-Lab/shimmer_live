@@ -1,7 +1,7 @@
 """Keypoints from other programs over TCP: a message on a port marks a keypoint at that moment.
 
 Ports (base port B, default 4000; keypoint N is the N-th in the Keypoints list):
-  B + N   any line (even empty: "\\n") marks keypoint N (B + N is the default: each keypoint's port can be set)
+  each keypoint's own port (fixed; 4001, 4002, ... at first)   any line (even empty: "\\n") marks it
   B       a line with a keypoint's name or number ("task start", "3") marks that keypoint
 
 The time is taken the instant the line arrives, before the app does anything else, so a busy UI does
