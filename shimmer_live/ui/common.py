@@ -151,8 +151,11 @@ def collect_garbage_on_gui_thread(parent):
 
 
 def ui_call(fn, *args, **kwargs):
-    """Run fn on the GUI thread (safe from any thread)."""
-    _bridge.sig.emit(lambda: fn(*args, **kwargs))
+    """Run fn on the GUI thread (safe from any thread). Dropped if the app has already closed."""
+    try:
+        _bridge.sig.emit(lambda: fn(*args, **kwargs))
+    except RuntimeError:                 # "Signal source has been deleted": a worker finishing after exit
+        pass
 
 
 def _deliver(payload):

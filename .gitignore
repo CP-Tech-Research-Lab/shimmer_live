@@ -8,3 +8,4 @@ dist/
 *.csv
 *.meta.json
 .pytest_cache/
+packaging/*.ico
