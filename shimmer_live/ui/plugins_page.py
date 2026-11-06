@@ -12,6 +12,7 @@ from .branding import BrandHeader
 
 class PluginsPage(QWidget):
     back = Signal()
+    changed = Signal()                # a plugin ticked/unticked, or the list reloaded
 
     def __init__(self, cfg):
         super().__init__()
@@ -71,6 +72,7 @@ class PluginsPage(QWidget):
         ids.add(pid) if on else ids.discard(pid)
         self.cfg.data["plugins_enabled"] = sorted(ids)
         self.cfg.save()
+        self.changed.emit()
 
     def reload(self):
         self.entries, self.errors = registry.discover()
@@ -86,6 +88,7 @@ class PluginsPage(QWidget):
             lab.setStyleSheet(f"color: {CRITICAL}; font-weight: 600;")
             self.list.addWidget(lab)
         self.list.addStretch(1)
+        self.changed.emit()
 
     def _card(self, e):
         c = e.cls

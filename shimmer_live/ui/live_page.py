@@ -546,6 +546,7 @@ class LivePage(QWidget):
         when = dt.datetime.fromtimestamp(ev["unix_ns"] / 1e9).strftime("%H:%M:%S")
         self.kp_feedback.setText(f"<span style='color:{kp.color}'>■</span> '{kp.name}' marked at {when}"
                                  + (f" (from {source})" if source else ""))
+        kpmod.notify(ev)                                 # app-wide plugin parts (e.g. LSL)
         return ev
 
     @staticmethod

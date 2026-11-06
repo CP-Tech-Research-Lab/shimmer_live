@@ -39,3 +39,26 @@ def save(cfg, keypoints: list[Keypoint]) -> None:
 def next_color(keypoints: list[Keypoint]) -> str:
     used = {k.color for k in keypoints}
     return next((c for c in CUSTOM_COLORS if c not in used), CUSTOM_COLORS[len(keypoints) % len(CUSTOM_COLORS)])
+
+
+# Listeners told about every keypoint marked (app-wide plugin parts). Called on the UI thread.
+_listeners = []
+
+
+def add_listener(fn) -> None:
+    if fn not in _listeners:
+        _listeners.append(fn)
+
+
+def remove_listener(fn) -> None:
+    if fn in _listeners:
+        _listeners.remove(fn)
+
+
+def notify(event: dict) -> None:
+    for fn in list(_listeners):
+        try:
+            fn(event)
+        except Exception:                          # noqa: BLE001 - a listener must never stop a keypoint
+            import logging
+            logging.getLogger("shimmerlive.keypoints").exception("keypoint listener failed")

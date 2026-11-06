@@ -12,6 +12,7 @@ from .. import kp_server, sdlog
 from ..bt import BackendUnavailable, get_backend
 from .devices_page import DevicesPage
 from .branding import APP_NAME, lab_name
+from ..plugins.app import AppPlugins
 from .common import fit_to_screen, ui_call
 from .dialogs import SaveRecordingDialog
 from .icons import app_icon
@@ -53,6 +54,10 @@ class MainWindow(QMainWindow):
         self.devices.refresh()
         self.kp_server = kp_server.KeypointServer(self._tcp_keypoint)
         self.devices.keypoints.attach_server(self.kp_server)
+        # app-wide parts of ticked plugins (e.g. LSL markers): they run whatever page is open
+        self.app_plugins = AppPlugins(cfg, self._mark_from, ui_call)
+        self.app_plugins.sync(self.plugins.enabled_entries())
+        self.plugins.changed.connect(lambda: self.app_plugins.sync(self.plugins.enabled_entries()))
         QTimer.singleShot(500, self._recover_unsaved)
         full = QShortcut(QKeySequence(Qt.Key_F11), self)
         full.activated.connect(lambda: self.showMaximized() if self.isFullScreen() else self.showFullScreen())
@@ -79,20 +84,23 @@ class MainWindow(QMainWindow):
             return "OK pending (the app is busy; marked at the time the message arrived)"
 
     def _mark_from_tcp(self, target, at):
+        return self._mark_from(target, at, f"tcp:{at['port']}")
+
+    def _mark_from(self, target, at, source):
+        """Mark a keypoint for another program (TCP, a plugin) at `at`. UI thread. Returns the reply line."""
         kp = kp_server.resolve(kpmod.load(self.cfg), target)
         if kp is None:
             return ("ERR no keypoint on this port" if isinstance(target, int)
                     else f"ERR unknown keypoint '{target}'")
-        source = f"tcp:{at['port']}"
         ev = None
         if self.live.recorder is not None:
             ev = self.live.mark(kp, at, source)
         elif sdlog.active(self.cfg):
             ev = self.sd.mark(kp, at, source)
         if ev is None:
-            log.info("keypoint '%s' over TCP (port %d) ignored: nothing is recording", kp.name, at["port"])
+            log.info("keypoint '%s' from %s ignored: nothing is recording", kp.name, source)
             return "ERR not recording"
-        log.info("keypoint '%s' marked over TCP (port %d)", kp.name, at["port"])
+        log.info("keypoint '%s' marked from %s", kp.name, source)
         return f"OK {kp.name} {ev['unix_ns']}"
 
     def _recover_unsaved(self):
@@ -135,4 +143,5 @@ class MainWindow(QMainWindow):
             self.live.stop_recording()
         self.live.stop_now(timeout=8.0)                # send stop-streaming before exiting
         self.kp_server.stop()
+        self.app_plugins.stop_all()
         ev.accept()

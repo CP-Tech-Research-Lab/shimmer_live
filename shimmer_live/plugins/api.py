@@ -94,9 +94,26 @@ class SignalInfo:
     unit: str               # e.g. "mV", "uS"
     rate: float             # Hz
     kind: str               # "exg", "gsr", "vbatt", "other"
+    device_label: str = ""  # the label given to the Shimmer in the app, e.g. the participant ("alberto")
 
 
 KIND_NAMES = {"exg": "ECG/EMG", "gsr": "EDA/GSR", "vbatt": "battery", "other": "raw"}
+
+
+class AppContext:
+    """Handed to start_app(): what the app-wide part of a plugin can do with the app."""
+
+    def __init__(self, mark, keypoint_names):
+        self._mark, self._names = mark, keypoint_names
+
+    def mark(self, keypoint: str, when: float | None = None, source: str = "") -> str:
+        """Mark a keypoint (its name or 1-based number), now or at `when` (seconds on the shared clock,
+        see Plugin.host_time). Any thread. Returns "OK <name> <unix ns>" or "ERR <reason>" (e.g. when
+        nothing is recording). `source` is saved with it (keypoints.csv Source column)."""
+        return self._mark(keypoint, when, source)
+
+    def keypoint_names(self) -> list:
+        return self._names()
 
 
 class Plugin(ABC):
@@ -106,6 +123,10 @@ class Plugin(ABC):
     version: ClassVar[str] = "1.0"
     inputs: ClassVar[list] = []
     outputs: ClassVar[list] = []
+    # Optional parts (all off by default, so plugins written before them are unaffected):
+    per_device: ClassVar[bool] = True    # False: no per-Shimmer part (start/process are never called)
+    app_wide: ClassVar[bool] = False     # True: start_app/on_keypoint/stop_app run while the plugin is ticked
+    _host_offset_s = 0.0                 # set by the app before each process() (see host_time)
 
     @classmethod
     def match(cls, signals: list) -> tuple[list | None, str]:
@@ -135,6 +156,24 @@ class Plugin(ABC):
 
     def stop(self) -> None:
         """Live view closing."""
+
+    def host_time(self, t):
+        """Shimmer-clock seconds (the `t` of process()) -> seconds on this PC's shared monotonic clock: the
+        clock of the recordings' shared timestamps (QueryPerformanceCounter on Windows, CLOCK_MONOTONIC on
+        Linux), which is also time.perf_counter() and LSL's local_clock()."""
+        return np.asarray(t, dtype=float) + self._host_offset_s
+
+    # ---- app-wide part (app_wide = True): runs whenever the plugin is ticked, whatever page is open,
+    # including during SD recordings. One instance for the whole app, separate from the per-Shimmer ones.
+    def start_app(self, app: AppContext) -> None:
+        """Plugin ticked (or app started with it ticked)."""
+
+    def on_keypoint(self, event: dict) -> None:
+        """A keypoint was marked (button, key, TCP, a plugin...), during a live or an SD recording. UI thread:
+        keep it quick. event: name, color, unix_ns, time (shared-clock seconds), source ("" for a button)."""
+
+    def stop_app(self) -> None:
+        """Plugin unticked, or the app is closing."""
 
 
 def output_label(plugin_cls, spec: OutputSpec) -> str:

@@ -6,6 +6,7 @@ from collections import deque
 
 import numpy as np
 
+from .. import clocks
 from ..session import Ring
 from .api import SignalInfo
 
@@ -50,13 +51,20 @@ class Binding:
 
 
 def signal_infos(session) -> list:
-    return [SignalInfo(session.name, session.mac, s.key, s.label, s.unit or "", session.rate, s.kind)
+    label = getattr(session, "label", "")
+    return [SignalInfo(session.name, session.mac, s.key, s.label, s.unit or "", session.rate, s.kind, label)
             for s in session.specs if s.convert is not None or s.kind == "other"]
+
+
+def perf_to_shared_s() -> float:
+    """shared clock seconds - perf_counter seconds (0 on Windows and Linux, measured anyway)."""
+    return clocks.shared_clock_seconds(clocks.shared_clock_ticks()) - clocks.perf_ns() / 1e9
 
 
 class PluginHost:
     def __init__(self, entries):
-        self.entries = entries
+        self.entries = [e for e in entries if getattr(e.cls, "per_device", True)]   # others: app-wide only
+        self._perf_to_shared = perf_to_shared_s()
         self.bindings: list[Binding] = []
         self.unmatched = {}             # (plugin id, mac) -> reason
         self.recorder = None
@@ -123,6 +131,8 @@ class PluginHost:
         t = np.fromiter((c[0] for c in chunk), float, len(chunk))
         x = np.array([c[2] for c in chunk], dtype=float).reshape(len(chunk), -1)
         b.plot_offset = chunk[-1][1]
+        # Shimmer-clock seconds + plot offset = seconds since the session's time base (perf_counter)
+        b.plugin._host_offset_s = b.session.time_base_ns / 1e9 + b.plot_offset + self._perf_to_shared
         try:
             result = b.plugin.process(t, x) or {}
         except Exception as e:

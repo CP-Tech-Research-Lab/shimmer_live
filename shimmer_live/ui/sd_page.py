@@ -437,6 +437,7 @@ class SdPage(QWidget):
             return None
         ev = sdlog.add_keypoint(self.cfg, kp, at, source)
         self._list_keypoint(ev)
+        kpmod.notify(ev)                                 # app-wide plugin parts (e.g. LSL)
         return ev
 
     def _list_keypoint(self, ev):

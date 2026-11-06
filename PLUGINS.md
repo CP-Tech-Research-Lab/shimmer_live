@@ -52,7 +52,7 @@ The app runs one instance of the plugin **per device** that can provide every in
 
 ### `start(inputs)`
 
-`inputs` is a list of `SignalInfo`, one per `InputSpec` in the same order. Each has `device`, `mac`, `key`, `label`, `unit`, `rate` (Hz) and `kind`. Set up your state here, e.g. design filters for `inputs[0].rate`.
+`inputs` is a list of `SignalInfo`, one per `InputSpec` in the same order. Each has `device`, `mac`, `key`, `label`, `unit`, `rate` (Hz), `kind` and `device_label` (the label given to the Shimmer in the app, e.g. the participant; empty if none). Set up your state here, e.g. design filters for `inputs[0].rate`.
 
 ### `process(t, x)` → `{output key: (times, values)}`
 
@@ -70,6 +70,34 @@ Called on a dedicated worker thread, never the UI or Bluetooth thread, so plain 
 ### Errors
 
 If `start`, `process` or `reset` raises, that plugin instance stops and a warning banner shows the error. The rest of the app, including other plugins and the recording, keeps running.
+
+### Host time: `self.host_time(t)`
+`t` is on the Shimmer's clock. `self.host_time(t)` converts it to seconds on this PC's **shared monotonic clock**: QueryPerformanceCounter on Windows, CLOCK_MONOTONIC on Linux. That is the clock of the recordings' shared timestamps, of `time.perf_counter()`, and of LSL's `local_clock()`. Use it when another program needs to know when a sample happened. The conversion is the one the live view uses: the Shimmer clock anchored at the first packet of each connection.
+
+### Optional: an app-wide part
+Some plugins don't work on one Shimmer's signals, or not only on them. For example, an LSL plugin sends keypoints to other programs and turns their markers into keypoints. Set `app_wide = True` and implement any of these:
+
+```python
+class MyBridge(Plugin):
+    id = "my_bridge"
+    name = "My bridge"
+    app_wide = True          # start_app / on_keypoint / stop_app run while the plugin is ticked
+    per_device = False       # and no per-Shimmer part (start/process are then never called)
+
+    def start(self, inputs): ...
+    def process(self, t, x): return {}
+
+    def start_app(self, app): ...          # plugin ticked, or app started with it ticked
+    def on_keypoint(self, event): ...      # every keypoint: name, color, unix_ns, time, source
+    def stop_app(self): ...                # unticked, or the app is closing
+```
+
+- **When it runs:** one instance for the whole app, running whatever page is open, so also during **SD recordings**, which per-Shimmer parts don't run in.
+- **`on_keypoint(event)`:** called for every keypoint, whether it comes from a button, keys 1–9, TCP or a plugin. `event["time"]` is on the shared clock, and `event["source"]` says where it came from (`""` for the app's own buttons). It runs on the UI thread, so keep it quick.
+- **`app.mark("task start", when=None, source="")`:** marks a keypoint. The keypoint can be given by name or 1-based number. `when` is a time on the shared clock and defaults to now. You can call it from any thread. It returns `"OK <name> <unix ns>"`, or `"ERR not recording"` when nothing is recording. Keypoints you mark also reach `on_keypoint` with your `source`, so skip your own source to avoid echoing them back.
+- **`app.keypoint_names()`:** the current keypoint list.
+- **Both parts:** a plugin can have a per-Shimmer part and an app-wide part at the same time (both flags `True`).
+- **Errors:** an error in the app-wide part stops only that part and is logged.
 
 ## Testing a plugin without a Shimmer
 
