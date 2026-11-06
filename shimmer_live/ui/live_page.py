@@ -834,7 +834,7 @@ class LivePage(QWidget):
         plugin_outputs = {}
         for s in ready:
             for b in self._bindings(s):
-                if b.error is None:
+                if b.error is None and b.cls.outputs:         # plugins without outputs (LSL) record nothing
                     plugin_outputs[b] = {o.key for o in b.cls.outputs if self.is_recorded(s.mac, plugin_key(b, o))}
         if not any(record_keys.values()) and not any(plugin_outputs.values()):
             QMessageBox.warning(self, "Start recording", "Nothing is selected for recording (the dot buttons in "

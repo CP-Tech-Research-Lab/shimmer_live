@@ -20,3 +20,6 @@ winrt-Windows.Foundation.Collections>=4.0; sys_platform == "win32"
 
 # Real-time plugins (HRV) and quality checks
 scipy>=1.10
+
+# LSL plugin (Lab Streaming Layer; wheels include liblsl for Windows, Linux and macOS)
+pylsl>=1.16
