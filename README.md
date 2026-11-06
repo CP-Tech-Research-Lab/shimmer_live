@@ -2,6 +2,70 @@
 
 Desktop app (Linux and Windows) to pair Shimmer3 sensors, view their data in real time, mark keypoints, run analysis plugins such as real-time HRV, and record everything to a single ZIP of Consensys-style CSV files with quality checks and notes.
 
+## A quick tour
+
+**Finding your Shimmers.** The start page groups every Shimmer by what you can do with it now. It finds the docked ones over USB, and checks over Bluetooth which paired ones are switched on nearby, one after the other.
+
+![Finding Shimmers: the start page checks which Shimmers are switched on](docs/media/01_finding_shimmers.gif)
+
+**Live view.** Signals from every Shimmer, labelled with the participant. Start a recording and mark keypoints with a click or the keys 1–9. The HRV plugin computes the heart rate live.
+
+![Live view: streaming, recording and keypoints](docs/media/02_live_view.gif)
+
+**Reviewing a recording.** After *Stop recording* (or an SD import), *View signals…* shows everything on one time axis. Drag the box in the overview to move through hours of data, and see the keypoints, late starts and gaps.
+
+![Recording viewer: drag the box to move through the recording](docs/media/03_recording_viewer.gif)
+
+| Keypoints and TCP ports | Recording on SD cards |
+|---|---|
+| ![Keypoints tab](docs/media/04_keypoints_tab.png) | ![SD recording page](docs/media/06_sd_recording.png) |
+| **Plugins (HRV, LSL)** | **Device settings and labels** |
+| ![Plugins page](docs/media/05_plugins.png) | ![Device settings](docs/media/07_device_settings.png) |
+
+*These pictures are made from the app itself with simulated Shimmers: `python tools/make_docs_media.py` makes them again (needs ffmpeg).*
+
+## Tutorials
+
+### 1. First time: set up Shimmers from a base
+1. Connect the Shimmer Base by USB, put the Shimmers in it and switch them on. They appear under **In the base** with their slot.
+2. Tick them and press **Set up docked Shimmers**. The app pairs each one (PIN 1234 entered for you), tests it and sets its clock. The Status column shows *ready* or the problem.
+3. Optional: double-click a Shimmer's name to give it a **label**, e.g. the participant (`P01`).
+4. Take them out of the base, switched on. Within seconds they move to **Ready**, ticked.
+
+No base? Switch the Shimmer on near the computer. It appears under **Found nearby, not paired** within about a minute; press **Pair**.
+
+### 2. Record an experiment in live view
+1. On the start page, tick the Shimmers in **Ready** and press **Show live data**. At most 6–7 can stream at once; for more, see tutorial 3.
+2. In the **Signals** panel, the eye shows or hides a signal and the dot selects whether it is recorded. ECG and EDA are on by default; switch on PPG (A13) if you use the optical probe.
+3. Choose **Values to save**: *Calibrated (mV, µS)* gives Consensys-style columns, *Raw* keeps the device's integers (the formulas are saved too).
+4. Press **Start recording**. Mark moments with the keypoint buttons or the keys **1–9**.
+5. Press **Stop recording**. The save dialog shows the quality checks. Give the recording a name, add notes, use **View signals…** to look through it, and press **Save recording** (one ZIP).
+
+### 3. More Shimmers than Bluetooth allows: record on their SD cards
+1. Tick the Shimmers in **Ready** and press **Record on SD cards…**, then name the session. Each Shimmer gets its clock set and starts recording on its own card.
+2. Mark keypoints on the SD page, as in live view. You can close the app; the session is still there when you reopen it.
+3. Press **Stop recording** before docking them.
+4. Dock them and press **Import from base**. The usual save dialog opens, with the same ZIP layout as a live recording.
+
+### 4. Review and save a recording
+In the save dialog, **View signals…** opens the viewer:
+- **Overview strip:** one bar per Shimmer where it has data, plus the keypoints. Drag the shaded box or click to jump.
+- **Show:** 5 s to 10 min at a time. The scrollbar, ◀ ▶ and the arrow keys move all signals together.
+- **Gaps:** shaded in red; a Shimmer that started late begins further right.
+
+To analyse the ZIP in Python: `examples/load_recording.py` (see [Analysing recordings](#analysing-recordings)).
+
+### 5. Mark keypoints from another program
+- **TCP:** in the **Keypoints** tab, keypoint *N* listens on port *4000 + N* (changeable). Send any line to mark it, e.g. `python -c "import socket; socket.create_connection(('127.0.0.1', 4005)).sendall(b'\n')"`. Port 4000 takes a name or number.
+- **LSL:** tick **LSL** on the Plugins page. Markers from PsychoPy, Unity, … whose text is a keypoint name or number become keypoints. The Shimmers and your keypoints are published as LSL streams for LabRecorder.
+
+Both work during live and SD recordings, and the time is taken when the message arrives.
+
+### 6. Update a Shimmer's firmware
+1. Put the Shimmer in the base. Highlight it and press **Update firmware…**, or use *Firmware…* in its ⚙ Settings.
+2. Its configuration is saved, the official image is written and verified, and the configuration is restored. This takes about 1 minute.
+3. Switch the Shimmer **off and on** once when asked.
+
 ## Run
 
 - **Linux:** `./run_linux.sh`
@@ -11,7 +75,7 @@ The first run creates `.venv` and installs `requirements.txt`. The Windows launc
 
 ## Using it
 
-For a Shimmer3 GSR+ optical pulse probe, select **PPG optical probe** in device Settings. This enables **Internal ADC A13** and makes sure the **3 V expansion power** setting is ON (it is written only if it is OFF). The Shimmer then powers the probe only while streaming or recording to SD: the green LED is on during acquisition and off otherwise. **PPG does not work while the Shimmer is in a base or dock**: there the probe loses power about a second after acquisition starts (LED off, A13 reads 0); live view warns about it. Also enable **GSR (GSR+ board)** for EDA. The PPG choice is remembered per device on this PC; the ADC and power settings are stored on the Shimmer. In Live data, use the eye and record dot for `INTERNAL_ADC_13 (raw)` to display and save PPG.
+For a Shimmer3 GSR+ optical pulse probe, select **PPG optical probe** in device Settings. This enables **Internal ADC A13** and makes sure the **3 V expansion power** setting is ON (it is written only if it is OFF). The Shimmer then powers the probe only while streaming or recording to SD: the green LED is on during acquisition and off otherwise. **PPG does not work while the Shimmer is in a base or dock**: there the probe loses power about a second after acquisition starts (LED off, A13 reads 0); live view warns about it. Also enable **GSR (GSR+ board)** for EDA. The PPG choice is remembered per device on this PC; the ADC and power settings are stored on the Shimmer. In Live data, use the eye and record dot for **PPG (A13)** to display and save PPG (in mV, as Consensys).
 
 1. **Start page (Devices).** Status pills at the top show whether Bluetooth is on and whether a Shimmer Base is connected. **Your Shimmers** lists every Shimmer once, in four groups, each with a title row and its own background colour:
    - **Ready:** paired, **not in a base** and switched on nearby. Only these can be ticked for *Show live data* and *Record on SD cards*.
@@ -39,7 +103,7 @@ For a Shimmer3 GSR+ optical pulse probe, select **PPG optical probe** in device 
      - **eye** shows or hides the signal in live view;
      - **dot** selects whether it is recorded. Record choices lock once a recording starts.
 3. **Keypoints.** While recording, a button per keypoint (keys **1–9** for the first nine) marks the current moment. A line in the keypoint's colour appears on every plot, and the keypoint is saved with every Shimmer's data.
-   - **From other programs (TCP).** Another program (stimulus script, game engine, …) can mark a keypoint by sending one line over TCP: to a keypoint's port anything (even just a newline) marks it — by default **4000 + N** for keypoint N, and each keypoint's port can be changed in the *Port* column of the Keypoints tab (a port already used is refused; empty = back to the default); to port **4000** the keypoint's name or number. The time is taken the instant the line arrives (well under 1 ms after it is sent, locally). The app answers `OK <name> <unix ns>`, or `ERR not recording`. It works during live recordings and SD recordings; `keypoints.csv` has a *Source* column (`button` or `tcp:<port>`). Settings are in the *Keypoints* tab: on/off, first port, and whether other computers may connect (off by default: this computer only). Example: `python -c "import socket; socket.create_connection(('127.0.0.1', 4005)).sendall(b'\\n')"`.
+   - **From other programs (TCP).** Another program (stimulus script, game engine, …) can mark a keypoint by sending one line over TCP: to a keypoint's port anything (even just a newline) marks it — by default **4000 + N** for keypoint N, and each keypoint's port can be changed in the *Port* column of the Keypoints tab (a port already used is refused; empty = back to the default); to port **4000** the keypoint's name or number. The time is taken the instant the line arrives (well under 1 ms after it is sent, locally). The app answers `OK <name> <unix ns>`, or `ERR not recording`. It works during live recordings and SD recordings; `keypoints.csv` has a *Source* column (`button` or `tcp:<port>`). Settings are in the *Keypoints* tab: on/off, first port, and whether other computers may connect (off by default: this computer only). Example: `python -c "import socket; socket.create_connection(('127.0.0.1', 4005)).sendall(b'\n')"`.
 4. **Plugins.** Plugins ticked on the Plugins page run on every device that has the signals they need. Their outputs are plotted and can be recorded like any other signal. Built in: **HRV**, real-time R-peak detection on ECG giving heart rate, RR interval and RMSSD over the last 30 s, with artifact beats excluded. To write your own, see [PLUGINS.md](PLUGINS.md).
    - **LSL** (built in, tick it on the Plugins page): the Lab Streaming Layer bridge.
      - *Shimmer data:* in live view, each Shimmer becomes an LSL stream named like `Shimmer3-A281 (alberto)`, with every streamed channel in calibrated units at its sampling rate. Samples are timestamped when they were taken, on the shared clock, which is LSL's `local_clock()`.
