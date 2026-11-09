@@ -3,6 +3,7 @@ base, Bluetooth scan for Shimmers that are not docked, guide, keypoints and log.
 import concurrent.futures
 import datetime as dt
 import logging
+import sys
 import time
 from dataclasses import dataclass
 
@@ -38,7 +39,8 @@ IDLE_GREY = "#a6a6a2"         # not docked and not found nearby: switched off, f
 PRESENCE_SCAN_S = 12          # each round of knocks on paired Shimmers that are not docked (Bluetooth budget)...
 PRESENCE_PAUSE_MS = 3000      # ...then a pause, so Bluetooth is free part of the time
 PRESENT_S = 120               # answered less than this long ago (found ones are re-checked every round)
-DISCOVER_EVERY_S = 45         # look for Shimmers that are not paired yet this often (a short discovery)...
+DISCOVER_EVERY_S = 45 if sys.platform != "win32" else 120   # look for Shimmers not paired yet this often...
+# (a discovery is a few seconds on Linux, a 10-30 s inquiry on Windows: nothing else uses the radio meanwhile)
 DISCOVER_S = 6                # ...this long (Windows' inquiry takes as long as it takes)
 DROP_CANDIDATE_MISSES = 3     # an unpaired Shimmer seen by a discovery but not answering is forgotten after this
 READY, BASE, NEARBY, AWAY = "ready", "base", "nearby", "away"
@@ -523,7 +525,8 @@ class DevicesPage(QWidget):
             self._set_activity("paused")
             self._presence_next(2000)
             return
-        if time.monotonic() - self._last_discover > DISCOVER_EVERY_S:
+        # paired Shimmers first: the first look for unpaired ones waits until every paired one was checked once
+        if self._first_round_done() and time.monotonic() - self._last_discover > DISCOVER_EVERY_S:
             self._discover_round()
             return
         docked = {s.mac for _, s in self.base.docked() if s.mac}
@@ -567,6 +570,8 @@ class DevicesPage(QWidget):
         background search is using Bluetooth (it pauses while this runs)."""
         if not self._shown or self.busy or self.base.setting_up or self._presence_running or not self.backend:
             return
+        if not self._first_round_done():
+            return                     # find every switched-on Shimmer first; reading battery and sensors can wait
         due = []
         for r in self.rows:
             if r.header or not r.mac or not r.paired or r.mac in self._sd_macs:
@@ -580,6 +585,10 @@ class DevicesPage(QWidget):
         if due:
             _, r = max(due, key=lambda x: x[0])
             self._test(r.mac, r.name)
+
+    def _first_round_done(self) -> bool:
+        """Every paired Shimmer that is not in a base has been checked once since the page was shown."""
+        return all(r.mac in self.checked for r in self._to_check())
 
     def _to_check(self):
         """Paired Shimmers that are not docked (the ones the knocks are for)."""
@@ -1086,8 +1095,6 @@ class DevicesPage(QWidget):
         self._shown = True
         self._read_timer.start()
         self.checked = set()                 # "waiting…" again until each has been checked after coming back
-        # paired Shimmers first: the first look for unpaired ones comes ~15 s after the page is shown
-        self._last_discover = max(self._last_discover, time.monotonic() - DISCOVER_EVERY_S + 15)
         self._presence_next(300)
 
     def hideEvent(self, ev):

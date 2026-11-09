@@ -18,6 +18,8 @@ from .base import (NOT_RESPONDING_HINT, BackendUnavailable, BluetoothBackend, Bt
 
 log = logging.getLogger("shimmerlive.winrt")
 
+KNOCK_TIMEOUT_S = 7.0        # a switched-on Shimmer answers in 1-3 s; one switched off must not hold the queue
+
 try:
     from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothDevice, BluetoothError
     from winrt.windows.devices.enumeration import (DeviceInformation, DevicePairingKinds,
@@ -131,7 +133,9 @@ class WindowsBackend(BluetoothBackend):
             if should_stop() or (out and time.monotonic() >= end):
                 break
             try:
-                out[addr.upper()] = bool(self._run(self._knock(addr.upper()), 20))
+                # wait_for cancels the WinRT request when the time is up, so the radio is free for the next knock
+                out[addr.upper()] = bool(self._run(asyncio.wait_for(self._knock(addr.upper()), KNOCK_TIMEOUT_S),
+                                                   KNOCK_TIMEOUT_S + 5))
             except Exception as e:                          # noqa: BLE001 - counts as no answer
                 log.info("%s: no answer (%s)", addr, e)
                 out[addr.upper()] = False

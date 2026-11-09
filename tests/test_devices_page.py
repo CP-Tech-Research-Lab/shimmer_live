@@ -323,9 +323,32 @@ def test_ready_shimmers_are_read_every_5_minutes_one_at_a_time(page, monkeypatch
     page._render_all()
     read = []
     monkeypatch.setattr(page, "_test", lambda mac, name, then=None: (read.append(mac), page.busy.update({mac: "x"})))
+    page.checked = {a, b}                                                # c not checked yet since the page opened
+    page._auto_read()
+    assert read == []                                   # every paired Shimmer is found first, then they are read
+    page.checked = {a, b, c}
     page._auto_read()
     page._auto_read()                                                    # one at a time: busy until it ends
     assert read == [a]
+
+
+def test_unpaired_search_waits_until_every_paired_shimmer_was_checked(page, monkeypatch):
+    import shimmer_live.ui.devices_page as dpm
+    monkeypatch.setattr(dpm, "run_bg", lambda fn, done=None, failed=None, name=None: done(fn()))
+    monkeypatch.setattr(dpm, "ui_call", lambda fn, *a: fn(*a))
+    a, b = "40:84:32:56:A2:81", "D8:47:8F:04:BC:CE"
+    page.backend, page.presence, page._shown = FakeBackend({a}), True, True
+    page.backend.unpaired = [("40:84:32:56:BE:EF", "Shimmer3-BEEF")]
+    page.paired = [BtDevice(a, "Shimmer3-A281", True), BtDevice(b, "Shimmer3-BCCE", True)]
+    page.base.state = "none"
+    page._render_all()
+    calls = []
+    real_discover = page._discover_round
+    monkeypatch.setattr(page, "_discover_round", lambda: (calls.append("discover"), real_discover()))
+    page._presence_scan()                               # first: knocks on the paired ones, no discovery
+    assert calls == [] and page.checked == {a, b}
+    page._presence_scan()                               # all checked once: now it looks for unpaired ones
+    assert calls == ["discover"]
 
 
 def test_a_failed_reading_keeps_the_last_values(tmp_path, monkeypatch):
