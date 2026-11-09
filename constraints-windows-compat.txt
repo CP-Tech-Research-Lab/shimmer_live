@@ -1,3 +1,4 @@
-# Optional fallback for PCs where Windows blocks a newer pandas binary.
-# Not a default requirement or a guarantee of approval by Windows security policy.
+# Required by both Windows executable build paths; optional for source installations.
+# Avoid bundling the newer pandas binary blocked by Smart App Control on a test PC.
+# This is not a guarantee of approval by every Windows security policy.
 pandas==2.3.3

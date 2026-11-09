@@ -1,5 +1,29 @@
 # Windows installation
 
+## Portable Windows release
+
+Extract the complete Windows release ZIP and open `ShimmerLive.exe` inside the
+`ShimmerLive` folder. Keep `_internal` beside the executable. Python and the app's
+dependencies are bundled; users do not need Python, pip, or a virtual environment.
+
+Both the GitHub release workflow and `build_windows.bat` apply
+`constraints-windows-compat.txt` when installing build dependencies. This bundles
+pandas 2.3.3 instead of the newer pandas binary blocked by Smart App Control in
+the v0.3.1 release. Builds start with a clean PyInstaller cache and must produce
+a successful executable self-test report before being considered ready. Build
+scripts isolate `PATH` so unrelated installed tools cannot supply conflicting
+DLLs to PyInstaller. The
+release includes `build-packages.txt` with the resolved package versions.
+
+This change requires a new build; it cannot repair an already downloaded v0.3.1
+ZIP. A passing CI startup test does not establish Smart App Control acceptance
+on another PC. Validate the finished ZIP on a protected Windows PC before
+distribution. Trusted code signing of the executable and bundled native
+components remains necessary for a dependable signed distribution; these builds
+do not add signing or change Windows security settings.
+
+## Running from source
+
 Use a local virtual environment on each PC. It keeps the application's Python packages separate from other programs while preserving native access to Windows Bluetooth, COM ports, USB bases and the desktop.
 
 ## First installation
